@@ -24,4 +24,4 @@ This is a first version that achieves that (drop in replacement for `http.Listen
 
 ## Examples
 
-are in http://github.com/fvbock/endless/examples
+are in https://github.com/fvbock/endless/tree/master/examples
