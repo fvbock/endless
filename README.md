@@ -1,7 +1,7 @@
 # endless
 Zero downtime restarts for go servers
 
-## Inspiration
+## Inspiration & Credits
 
 Well... it's what you want right - no need to hook in and out on a loadbalancer or something - just compile, SIGHUP, start new one, finish old requests etc.
 
