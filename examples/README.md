@@ -36,6 +36,27 @@ make another request
     WORLD?
 
 
+## TLS
+
+create local cert and key file:
+
+    go run $GOROOT/src/crypto/tls/generate_cert.go --host=localhost
+
+compile the example
+
+    $ go build -o tls_server examples/tls.go
+
+run it
+
+    $ ./tls_server
+    2015/03/23 19:43:29 PID: 21710 localhost:4242
+
+make a request (`-k` to disable certificate checks in curl)
+
+    $ curl -k https://localhost:4242/hello
+    WORLD!
+
+
 ## Running several servers (eg on several ports)
 
 TODO

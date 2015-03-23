@@ -1,6 +1,7 @@
 package endless
 
 import (
+	"crypto/tls"
 	"flag"
 	"log"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/fvbock/uds-go/introspect"
 )
 
 const (
@@ -35,11 +38,12 @@ func init() {
 
 type endlessServer struct {
 	http.Server
-	Listener    *endlessListener
-	wg          sync.WaitGroup
-	sigChan     chan os.Signal
-	isChild     bool
-	SignalHooks map[int]map[os.Signal][]func()
+	EndlessListener  net.Listener
+	TLSInnerListener *endlessListener
+	wg               sync.WaitGroup
+	sigChan          chan os.Signal
+	isChild          bool
+	SignalHooks      map[int]map[os.Signal][]func()
 }
 
 func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
@@ -120,7 +124,7 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 			return
 		}
 	}
-	srv.Listener = newEndlessListener(l, srv)
+	srv.EndlessListener = newEndlessListener(l, srv)
 
 	if srv.isChild {
 		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
@@ -131,47 +135,78 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 }
 
 func (srv *endlessServer) Serve() (err error) {
-	err = srv.Server.Serve(srv.Listener)
+	err = srv.Server.Serve(srv.EndlessListener)
 	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
 	srv.wg.Wait()
 	return
 }
 
-// TODO: TLS...
+func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
+	server := NewServer(addr, handler)
+	return server.ListenAndServeTLS(certFile, keyFile)
+}
 
-// func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler, isChild bool) error {
-// 	server := NewServer(addr, handler, isChild)
-// 	return server.ListenAndServeTLS(certFile, keyFile)
-// }
+func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error) {
+	addr := srv.Addr
+	if addr == "" {
+		addr = ":https"
+	}
+	config := &tls.Config{}
+	if srv.TLSConfig != nil {
+		*config = *srv.TLSConfig
+	}
+	if config.NextProtos == nil {
+		config.NextProtos = []string{"http/1.1"}
+	}
 
-// func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
-// 	addr := srv.Addr
-// 	if addr == "" {
-// 		addr = ":https"
-// 	}
-// 	config := &tls.Config{}
-// 	if srv.TLSConfig != nil {
-// 		*config = *srv.TLSConfig
-// 	}
-// 	if config.NextProtos == nil {
-// 		config.NextProtos = []string{"http/1.1"}
-// 	}
+	config.Certificates = make([]tls.Certificate, 1)
+	config.Certificates[0], err = tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return
+	}
 
-// 	var err error
-// 	config.Certificates = make([]tls.Certificate, 1)
-// 	config.Certificates[0], err = tls.LoadX509KeyPair(certFile, keyFile)
-// 	if err != nil {
-// 		return err
-// 	}
+	// ------------------------
 
-// 	ln, err := net.Listen("tcp", addr)
-// 	if err != nil {
-// 		return err
-// 	}
+	go srv.handleSignals()
 
-// 	tlsListener := tls.NewListener(tcpKeepAliveListener{ln.(*net.TCPListener)}, config)
-// 	return srv.Serve(tlsListener)
-// }
+	var l net.Listener
+	if srv.isChild {
+		// log.Println("IsChild.")
+		var ptrOffset uint = 0
+		// wonder whether starting servers in goroutines could create a
+		// race which ends up assigning the wrong fd... maybe add Addr
+		// to the registry of runningServers
+		for i, srvPtr := range runningServers {
+			if srv == srvPtr {
+				ptrOffset = uint(i)
+				break
+			}
+		}
+		f := os.NewFile(uintptr(3+ptrOffset), "")
+		l, err = net.FileListener(f)
+		if err != nil {
+			log.Println("net.FileListener error:", err)
+			return
+		}
+	} else {
+		// log.Println("NewServer.")
+		l, err = net.Listen("tcp", srv.Server.Addr)
+		if err != nil {
+			log.Println("net.Listen error:", err)
+			return
+		}
+	}
+
+	srv.TLSInnerListener = newEndlessListener(l, srv)
+	srv.EndlessListener = tls.NewListener(srv.TLSInnerListener, config)
+
+	if srv.isChild {
+		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
+	}
+
+	log.Println("PID:", syscall.Getpid(), srv.Addr)
+	return srv.Serve()
+}
 
 func (srv *endlessServer) handleSignals() {
 	var sig os.Signal
@@ -228,11 +263,11 @@ func (srv *endlessServer) signalHooks(ppFlag int, sig os.Signal) {
 }
 
 func (srv *endlessServer) shutdown() {
-	err := srv.Listener.Close()
+	err := srv.EndlessListener.Close()
 	if err != nil {
-		log.Println(syscall.Getpid(), "srv.Listener.Close() error:", err)
+		log.Println(syscall.Getpid(), "srv.EndlessListener.Close() error:", err)
 	} else {
-		log.Println(syscall.Getpid(), "srv.Listener closed.")
+		log.Println(syscall.Getpid(), "srv.EndlessListener closed.")
 	}
 }
 
@@ -245,7 +280,15 @@ func (srv *endlessServer) fork() (err error) {
 	var files []*os.File
 	// get the accessor socket fds for _all_ server instances
 	for _, srvPtr := range runningServers {
-		files = append(files, srvPtr.Listener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+		introspect.PrintTypeDump(srvPtr.EndlessListener)
+		switch srvPtr.EndlessListener.(type) {
+		case *endlessListener:
+			log.Println("normal listener")
+			files = append(files, srvPtr.EndlessListener.(*endlessListener).File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+		default:
+			log.Println("tls listener")
+			files = append(files, srvPtr.TLSInnerListener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+		}
 	}
 
 	path := os.Args[0]
