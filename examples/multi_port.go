@@ -21,7 +21,6 @@ func handlerFoo(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlerBar(w http.ResponseWriter, r *http.Request) {
-	time.Sleep(time.Second)
 	w.Write([]byte("FOO"))
 }
 

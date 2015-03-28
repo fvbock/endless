@@ -3,6 +3,7 @@ package endless
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fvbock/uds-go/introspect"
+	// "github.com/fvbock/uds-go/introspect"
 )
 
 const (
@@ -39,7 +40,7 @@ func init() {
 type endlessServer struct {
 	http.Server
 	EndlessListener  net.Listener
-	TLSInnerListener *endlessListener
+	tlsInnerListener *endlessListener
 	wg               sync.WaitGroup
 	sigChan          chan os.Signal
 	isChild          bool
@@ -97,33 +98,12 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 
 	go srv.handleSignals()
 
-	var l net.Listener
-	if srv.isChild {
-		// log.Println("IsChild.")
-		var ptrOffset uint = 0
-		// wonder whether starting servers in goroutines could create a
-		// race which ends up assigning the wrong fd... maybe add Addr
-		// to the registry of runningServers
-		for i, srvPtr := range runningServers {
-			if srv == srvPtr {
-				ptrOffset = uint(i)
-				break
-			}
-		}
-		f := os.NewFile(uintptr(3+ptrOffset), "")
-		l, err = net.FileListener(f)
-		if err != nil {
-			log.Println("net.FileListener error:", err)
-			return
-		}
-	} else {
-		// log.Println("NewServer.")
-		l, err = net.Listen("tcp", srv.Server.Addr)
-		if err != nil {
-			log.Println("net.Listen error:", err)
-			return
-		}
+	l, err := srv.getListener()
+	if err != nil {
+		log.Println(err)
+		return
 	}
+
 	srv.EndlessListener = newEndlessListener(l, srv)
 
 	if srv.isChild {
@@ -151,6 +131,7 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 	if addr == "" {
 		addr = ":https"
 	}
+
 	config := &tls.Config{}
 	if srv.TLSConfig != nil {
 		*config = *srv.TLSConfig
@@ -165,17 +146,32 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 		return
 	}
 
-	// ------------------------
-
 	go srv.handleSignals()
 
-	var l net.Listener
+	l, err := srv.getListener()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	srv.tlsInnerListener = newEndlessListener(l, srv)
+	srv.EndlessListener = tls.NewListener(srv.tlsInnerListener, config)
+
 	if srv.isChild {
-		// log.Println("IsChild.")
+		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
+	}
+
+	log.Println("PID:", syscall.Getpid(), srv.Addr)
+	return srv.Serve()
+}
+
+func (srv *endlessServer) getListener() (l net.Listener, err error) {
+	if srv.isChild {
 		var ptrOffset uint = 0
 		// wonder whether starting servers in goroutines could create a
 		// race which ends up assigning the wrong fd... maybe add Addr
 		// to the registry of runningServers
+		// UPDATE: yes. it *can* happen ;)
 		for i, srvPtr := range runningServers {
 			if srv == srvPtr {
 				ptrOffset = uint(i)
@@ -185,27 +181,17 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 		f := os.NewFile(uintptr(3+ptrOffset), "")
 		l, err = net.FileListener(f)
 		if err != nil {
-			log.Println("net.FileListener error:", err)
+			err = fmt.Errorf("net.FileListener error:", err)
 			return
 		}
 	} else {
-		// log.Println("NewServer.")
 		l, err = net.Listen("tcp", srv.Server.Addr)
 		if err != nil {
-			log.Println("net.Listen error:", err)
+			err = fmt.Errorf("net.Listen error:", err)
 			return
 		}
 	}
-
-	srv.TLSInnerListener = newEndlessListener(l, srv)
-	srv.EndlessListener = tls.NewListener(srv.TLSInnerListener, config)
-
-	if srv.isChild {
-		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
-	}
-
-	log.Println("PID:", syscall.Getpid(), srv.Addr)
-	return srv.Serve()
+	return
 }
 
 func (srv *endlessServer) handleSignals() {
@@ -267,9 +253,19 @@ func (srv *endlessServer) shutdown() {
 	if err != nil {
 		log.Println(syscall.Getpid(), "srv.EndlessListener.Close() error:", err)
 	} else {
-		log.Println(syscall.Getpid(), "srv.EndlessListener closed.")
+		log.Println(syscall.Getpid(), srv.EndlessListener.Addr(), "srv.EndlessListener closed.")
 	}
 }
+
+// /*
+// hammerTime forces the server to shutdown in a given timeout - whether it
+// finished outstanding requests or not. if Read/WriteTimeout are not set or the
+// max header size is 0 a connection could hang...
+// */
+// func (srv *endlessServer) hammerTime(d time.Duration) (err error) {
+// 	log.Println("[STOP - HAMMER TIME]")
+// 	return
+// }
 
 func (srv *endlessServer) fork() (err error) {
 	// only one server isntance should fork!
@@ -280,14 +276,14 @@ func (srv *endlessServer) fork() (err error) {
 	var files []*os.File
 	// get the accessor socket fds for _all_ server instances
 	for _, srvPtr := range runningServers {
-		introspect.PrintTypeDump(srvPtr.EndlessListener)
+		// introspect.PrintTypeDump(srvPtr.EndlessListener)
 		switch srvPtr.EndlessListener.(type) {
 		case *endlessListener:
-			log.Println("normal listener")
+			// log.Println("normal listener")
 			files = append(files, srvPtr.EndlessListener.(*endlessListener).File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
 		default:
-			log.Println("tls listener")
-			files = append(files, srvPtr.TLSInnerListener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+			// log.Println("tls listener")
+			files = append(files, srvPtr.tlsInnerListener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
 		}
 	}
 
