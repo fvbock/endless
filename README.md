@@ -1,6 +1,6 @@
 # endless
 
-Zero downtime restarts for golang HPTT and HTTPS servers.
+Zero downtime restarts for golang HTTP and HTTPS servers.
 
 ## Inspiration & Credits
 
