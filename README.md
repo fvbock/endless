@@ -1,5 +1,6 @@
 # endless
-Zero downtime restarts for go servers
+
+Zero downtime restarts for golang HPTT and HTTPS servers.
 
 ## Inspiration & Credits
 
@@ -11,14 +12,19 @@ There is https://github.com/rcrowley/goagain and i looked at https://fitstar.git
 
 I found the excellent post [Graceful Restart in Golang](http://grisha.org/blog/2014/06/03/graceful-restart-in-golang/) by [Grisha Trubetskoy](https://github.com/grisha) and took his code as a start. So a lot of credit to Grisha!
 
-This is a first version that achieves that (drop in replacement for `http.ListenAndServe`.
+
+## Features
+
+- Drop-in replacement for `http.ListenAndServe` and `http.ListenAndServeTLS`
+- Signal hooks to execute your own code before or after the listened to signals (SIGHUP, SIGUSR1, SIGUSR2, SIGINT, SIGTERM, SIGTSTP)
+
 
 ## TODOs
 
-- support https (drop in replacement for `http.ListenAndServeTLS`)
 - make the hooks system work properly (overridable defaults and access to the server instance))
 - tests
 - documentation
+- less ugly wrapping of the tls.listener
 - maybe also support for SP (scalable protocols - nanomsg or mangos)?
 
 

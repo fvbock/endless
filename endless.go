@@ -23,8 +23,13 @@ const (
 )
 
 var (
-	runningServerReg sync.Mutex
-	runningServers   map[int]*endlessServer
+	runningServerReg     sync.Mutex
+	runningServers       map[string]*endlessServer
+	runningServersOrder  map[int]string
+	runningServersForked bool
+
+	DefaultReadTimeOut  time.Duration
+	DefaultWriteTimeOut time.Duration
 
 	isChild bool
 )
@@ -34,7 +39,8 @@ func init() {
 	flag.Parse()
 
 	runningServerReg = sync.Mutex{}
-	runningServers = make(map[int]*endlessServer)
+	runningServers = make(map[string]*endlessServer)
+	runningServersOrder = make(map[int]string)
 }
 
 type endlessServer struct {
@@ -73,13 +79,14 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	}
 
 	srv.Server.Addr = addr
-	srv.Server.ReadTimeout = 10 * time.Second
-	srv.Server.WriteTimeout = 10 * time.Second
+	srv.Server.ReadTimeout = DefaultReadTimeOut
+	srv.Server.WriteTimeout = DefaultWriteTimeOut
 	// srv.Server.MaxHeaderBytes = 1 << 16
 	srv.Server.Handler = handler
 
 	runningServerReg.Lock()
-	runningServers[len(runningServers)] = srv
+	runningServersOrder[len(runningServers)] = addr
+	runningServers[addr] = srv
 	runningServerReg.Unlock()
 
 	return
@@ -98,7 +105,7 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 
 	go srv.handleSignals()
 
-	l, err := srv.getListener()
+	l, err := srv.getListener(addr)
 	if err != nil {
 		log.Println(err)
 		return
@@ -110,7 +117,7 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
 	}
 
-	log.Println("PID:", syscall.Getpid(), srv.Addr)
+	log.Println(syscall.Getpid(), srv.Addr)
 	return srv.Serve()
 }
 
@@ -148,7 +155,7 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 
 	go srv.handleSignals()
 
-	l, err := srv.getListener()
+	l, err := srv.getListener(addr)
 	if err != nil {
 		log.Println(err)
 		return
@@ -161,23 +168,24 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
 	}
 
-	log.Println("PID:", syscall.Getpid(), srv.Addr)
+	log.Println(syscall.Getpid(), srv.Addr)
 	return srv.Serve()
 }
 
-func (srv *endlessServer) getListener() (l net.Listener, err error) {
+func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) {
 	if srv.isChild {
 		var ptrOffset uint = 0
 		// wonder whether starting servers in goroutines could create a
 		// race which ends up assigning the wrong fd... maybe add Addr
 		// to the registry of runningServers
 		// UPDATE: yes. it *can* happen ;)
-		for i, srvPtr := range runningServers {
-			if srv == srvPtr {
+		for i, addr := range runningServersOrder {
+			if addr == laddr {
 				ptrOffset = uint(i)
 				break
 			}
 		}
+		log.Println("addr", laddr, ">>> ptr 3 +", ptrOffset)
 		f := os.NewFile(uintptr(3+ptrOffset), "")
 		l, err = net.FileListener(f)
 		if err != nil {
@@ -185,7 +193,8 @@ func (srv *endlessServer) getListener() (l net.Listener, err error) {
 			return
 		}
 	} else {
-		l, err = net.Listen("tcp", srv.Server.Addr)
+		// l, err = net.Listen("tcp", srv.Server.Addr)
+		l, err = net.Listen("tcp", laddr)
 		if err != nil {
 			err = fmt.Errorf("net.Listen error:", err)
 			return
@@ -230,7 +239,6 @@ func (srv *endlessServer) handleSignals() {
 			srv.shutdown()
 		case syscall.SIGTSTP:
 			log.Println(pid, "Received SIGTSTP.")
-			srv.shutdown()
 		default:
 			log.Printf("Received %v: nothing i care about....\n", sig)
 		}
@@ -257,21 +265,24 @@ func (srv *endlessServer) shutdown() {
 	}
 }
 
-// /*
+// /* TODO: add this
 // hammerTime forces the server to shutdown in a given timeout - whether it
 // finished outstanding requests or not. if Read/WriteTimeout are not set or the
 // max header size is 0 a connection could hang...
 // */
 // func (srv *endlessServer) hammerTime(d time.Duration) (err error) {
-// 	log.Println("[STOP - HAMMER TIME]")
+// 	log.Println("[STOP - HAMMER TIME] Forcefully shutting down parent.")
 // 	return
 // }
 
 func (srv *endlessServer) fork() (err error) {
 	// only one server isntance should fork!
-	if runningServers[0] != srv {
+	runningServerReg.Lock()
+	defer runningServerReg.Unlock()
+	if runningServersForked {
 		return
 	}
+	runningServersForked = true
 
 	var files []*os.File
 	// get the accessor socket fds for _all_ server instances
