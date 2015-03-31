@@ -28,8 +28,9 @@ var (
 	runningServersOrder  map[int]string
 	runningServersForked bool
 
-	DefaultReadTimeOut  time.Duration
-	DefaultWriteTimeOut time.Duration
+	DefaultReadTimeOut    time.Duration
+	DefaultWriteTimeOut   time.Duration
+	DefaultMaxHeaderBytes int
 
 	isChild bool
 )
@@ -81,7 +82,7 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	srv.Server.Addr = addr
 	srv.Server.ReadTimeout = DefaultReadTimeOut
 	srv.Server.WriteTimeout = DefaultWriteTimeOut
-	// srv.Server.MaxHeaderBytes = 1 << 16
+	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes // or 1 << 16? rather implent the hammerTime func
 	srv.Server.Handler = handler
 
 	runningServerReg.Lock()
@@ -175,17 +176,12 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) {
 	if srv.isChild {
 		var ptrOffset uint = 0
-		// wonder whether starting servers in goroutines could create a
-		// race which ends up assigning the wrong fd... maybe add Addr
-		// to the registry of runningServers
-		// UPDATE: yes. it *can* happen ;)
 		for i, addr := range runningServersOrder {
 			if addr == laddr {
 				ptrOffset = uint(i)
 				break
 			}
 		}
-		log.Println("addr", laddr, ">>> ptr 3 +", ptrOffset)
 		f := os.NewFile(uintptr(3+ptrOffset), "")
 		l, err = net.FileListener(f)
 		if err != nil {
@@ -193,7 +189,6 @@ func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) 
 			return
 		}
 	} else {
-		// l, err = net.Listen("tcp", srv.Server.Addr)
 		l, err = net.Listen("tcp", laddr)
 		if err != nil {
 			err = fmt.Errorf("net.Listen error:", err)
@@ -240,7 +235,7 @@ func (srv *endlessServer) handleSignals() {
 		case syscall.SIGTSTP:
 			log.Println(pid, "Received SIGTSTP.")
 		default:
-			log.Printf("Received %v: nothing i care about....\n", sig)
+			log.Printf("Received %v: nothing i care about...\n", sig)
 		}
 		srv.signalHooks(POST_SIGNAL, sig)
 	}
@@ -322,7 +317,6 @@ type endlessListener struct {
 }
 
 func (el *endlessListener) Accept() (c net.Conn, err error) {
-	// c, err = el.Listener.Accept()
 	tc, err := el.Listener.(*net.TCPListener).AcceptTCP()
 	if err != nil {
 		return
