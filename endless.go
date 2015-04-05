@@ -31,8 +31,16 @@ var (
 	DefaultReadTimeOut    time.Duration
 	DefaultWriteTimeOut   time.Duration
 	DefaultMaxHeaderBytes int
+	DefaultHammerTime     time.Duration
 
 	isChild bool
+)
+
+const (
+	STATE_INIT = iota
+	STATE_RUNNING
+	STATE_SHUTTING_DOWN
+	STATE_TERMINATE
 )
 
 func init() {
@@ -42,6 +50,12 @@ func init() {
 	runningServerReg = sync.Mutex{}
 	runningServers = make(map[string]*endlessServer)
 	runningServersOrder = make(map[int]string)
+
+	DefaultMaxHeaderBytes = 0 // use http.DefaultMaxHeaderBytes - which currently is 1 << 20 (1MB)
+
+	// after a restart the parent will finish ongoing requests before
+	// shutting down. set to a negative value to disable
+	DefaultHammerTime = 60 * time.Second
 }
 
 type endlessServer struct {
@@ -52,6 +66,7 @@ type endlessServer struct {
 	sigChan          chan os.Signal
 	isChild          bool
 	SignalHooks      map[int]map[os.Signal][]func()
+	state            uint8
 }
 
 func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
@@ -77,12 +92,13 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 				syscall.SIGTSTP: []func(){},
 			},
 		},
+		state: STATE_INIT,
 	}
 
 	srv.Server.Addr = addr
 	srv.Server.ReadTimeout = DefaultReadTimeOut
 	srv.Server.WriteTimeout = DefaultWriteTimeOut
-	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes // or 1 << 16? rather implent the hammerTime func
+	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes
 	srv.Server.Handler = handler
 
 	runningServerReg.Lock()
@@ -90,6 +106,15 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	runningServers[addr] = srv
 	runningServerReg.Unlock()
 
+	return
+}
+
+func (srv *endlessServer) Serve() (err error) {
+	srv.state = STATE_RUNNING
+	err = srv.Server.Serve(srv.EndlessListener)
+	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
+	srv.wg.Wait()
+	srv.state = STATE_TERMINATE
 	return
 }
 
@@ -120,13 +145,6 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 
 	log.Println(syscall.Getpid(), srv.Addr)
 	return srv.Serve()
-}
-
-func (srv *endlessServer) Serve() (err error) {
-	err = srv.Server.Serve(srv.EndlessListener)
-	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
-	srv.wg.Wait()
-	return
 }
 
 func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
@@ -185,13 +203,13 @@ func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) 
 		f := os.NewFile(uintptr(3+ptrOffset), "")
 		l, err = net.FileListener(f)
 		if err != nil {
-			err = fmt.Errorf("net.FileListener error:", err)
+			err = fmt.Errorf("net.FileListener error: %v", err)
 			return
 		}
 	} else {
 		l, err = net.Listen("tcp", laddr)
 		if err != nil {
-			err = fmt.Errorf("net.Listen error:", err)
+			err = fmt.Errorf("net.Listen error: %v", err)
 			return
 		}
 	}
@@ -226,6 +244,7 @@ func (srv *endlessServer) handleSignals() {
 			log.Println(pid, "Received SIGUSR1.")
 		case syscall.SIGUSR2:
 			log.Println(pid, "Received SIGUSR2.")
+			srv.hammerTime(0 * time.Second)
 		case syscall.SIGINT:
 			log.Println(pid, "Received SIGINT.")
 			srv.shutdown()
@@ -252,23 +271,51 @@ func (srv *endlessServer) signalHooks(ppFlag int, sig os.Signal) {
 }
 
 func (srv *endlessServer) shutdown() {
+	if srv.state != STATE_RUNNING {
+		return
+	}
+	srv.state = STATE_SHUTTING_DOWN
+	if DefaultHammerTime >= 0 {
+		go srv.hammerTime(DefaultHammerTime)
+	}
 	err := srv.EndlessListener.Close()
 	if err != nil {
-		log.Println(syscall.Getpid(), "srv.EndlessListener.Close() error:", err)
+		log.Println(syscall.Getpid(), "Listener.Close() error:", err)
 	} else {
-		log.Println(syscall.Getpid(), srv.EndlessListener.Addr(), "srv.EndlessListener closed.")
+		log.Println(syscall.Getpid(), srv.EndlessListener.Addr(), "Listener closed.")
 	}
 }
 
-// /* TODO: add this
-// hammerTime forces the server to shutdown in a given timeout - whether it
-// finished outstanding requests or not. if Read/WriteTimeout are not set or the
-// max header size is 0 a connection could hang...
-// */
-// func (srv *endlessServer) hammerTime(d time.Duration) (err error) {
-// 	log.Println("[STOP - HAMMER TIME] Forcefully shutting down parent.")
-// 	return
-// }
+/*
+hammerTime forces the server to shutdown in a given timeout - whether it
+finished outstanding requests or not. if Read/WriteTimeout are not set or the
+max header size is very big a connection could hang...
+
+srv.Serve() will not return until all connections are served. this will
+unblock the srv.wg.Wait() in Serve() thus causing ListenAndServe(TLS) to
+return.
+*/
+func (srv *endlessServer) hammerTime(d time.Duration) {
+	defer func() {
+		// we are calling srv.wg.Done() until it panics which means we called
+		// Done() when the counter was already at 0 and we're done.
+		// (and thus Serve() will return and the parent will exit)
+		if r := recover(); r != nil {
+			log.Println("WaitGroup at 0", r)
+		}
+	}()
+	if srv.state != STATE_SHUTTING_DOWN {
+		return
+	}
+	time.Sleep(d)
+	log.Println("[STOP - Hammer Time] Forcefully shutting down parent")
+	for {
+		if srv.state == STATE_TERMINATE {
+			break
+		}
+		srv.wg.Done()
+	}
+}
 
 func (srv *endlessServer) fork() (err error) {
 	// only one server isntance should fork!
