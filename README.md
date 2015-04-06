@@ -2,6 +2,7 @@
 
 Zero downtime restarts for golang HTTP and HTTPS servers.
 
+[![GoDoc](https://godoc.org/github.com/fvbock/endless?status.svg)](https://godoc.org/github.com/fvbock/endless)
 
 ## Inspiration & Credits
 
