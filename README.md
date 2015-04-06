@@ -49,9 +49,16 @@ If you had hanging requests and the server got hammered you will see a log messa
 
 ## Examples & Documentation
 
-Examples are in [here](https://github.com/fvbock/endless/tree/master/examples)
+    import "github.com/fvbock/endless"
 
-And there is also [Godoc Documentation](https://godoc.org/github.com/fvbock/endless)
+and then replacing `http.ListenAndServe` with `endless.ListenAndServe` or `http.ListenAndServeTLS` with `endless.ListenAndServeTLS`
+
+	err := endless.ListenAndServe("localhost:4242", handler)
+
+
+More examples are in [here](https://github.com/fvbock/endless/tree/master/examples)
+
+There is also [godoc Documentation](https://godoc.org/github.com/fvbock/endless)
 
 
 ## Limitation: No changing of ports
