@@ -63,7 +63,7 @@ There is also [GoDoc Documentation](https://godoc.org/github.com/fvbock/endless)
 
 ## Signals
 
-The endless server will listen for the following signals: `syscall.SIGHUP`, `syscall.SIGUSR1`, `syscall.SIGUSR2`, `syscall.SIGINT`, `syscall.SIGTERM`, `syscall.SIGTSTP`
+The endless server will listen for the following signals: `syscall.SIGHUP`, `syscall.SIGUSR1`, `syscall.SIGUSR2`, `syscall.SIGINT`, `syscall.SIGTERM`, and `syscall.SIGTSTP`:
 
 `SIGHUP` will trigger a fork/restart
 
