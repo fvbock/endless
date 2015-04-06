@@ -61,7 +61,36 @@ The rest is like the simple server example: modify the tls.go code, build, send 
 
 ## Hooking into the signal handling
 
-TODO
+If you want to time certain actions before or after the server does something based on a signal it received you can hook your own functions into the signal handling of the endless server.
+
+There is a `PRE_SIGNAL` and a `POST_SIGNAL` hook dor each signal. These are exposed as lists of parameterless functions:
+
+    func preSigUsr1() {
+	    log.Println("pre SIGUSR1")
+    }
+
+If you want to have this function executed before `SIGUSR1` you would add it to the hooks like this:
+
+	srv := endless.NewServer("localhost:4244", mux)
+	srv.SignalHooks[endless.PRE_SIGNAL][syscall.SIGUSR1] = append(
+		srv.SignalHooks[endless.PRE_SIGNAL][syscall.SIGUSR1],
+		preSigUsr1)
+
+then build, and run it
+
+    $ go build -o hook_server examples/hook.go
+    $ ./hook_server
+    2015/04/06 20:32:13 1489 localhost:4244
+
+now send `SIGUSR1`
+
+    kill -SIGUSR1 1489
+
+and you should see something like this
+
+    2015/04/06 20:33:07 pre SIGUSR1
+    2015/04/06 20:33:07 1489 Received SIGUSR1.
+    2015/04/06 20:33:07 post SIGUSR1
 
 
 ## Running several servers (eg on several ports)

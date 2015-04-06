@@ -59,11 +59,11 @@ func init() {
 type endlessServer struct {
 	http.Server
 	EndlessListener  net.Listener
+	SignalHooks      map[int]map[os.Signal][]func()
 	tlsInnerListener *endlessListener
 	wg               sync.WaitGroup
 	sigChan          chan os.Signal
 	isChild          bool
-	SignalHooks      map[int]map[os.Signal][]func()
 	state            uint8
 }
 

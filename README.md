@@ -58,7 +58,22 @@ and then replacing `http.ListenAndServe` with `endless.ListenAndServe` or `http.
 
 More examples are in [here](https://github.com/fvbock/endless/tree/master/examples)
 
-There is also [godoc Documentation](https://godoc.org/github.com/fvbock/endless)
+There is also [GoDoc Documentation](https://godoc.org/github.com/fvbock/endless)
+
+
+## Signals
+
+The endless server will listen for the following signals: `syscall.SIGHUP`, `syscall.SIGUSR1`, `syscall.SIGUSR2`, `syscall.SIGINT`, `syscall.SIGTERM`, `syscall.SIGTSTP`
+
+`SIGHUP` will trigger a fork/restart
+
+`syscall.SIGINT` and `syscall.SIGTERM` will trigger a shutdown of the server (it will finish running requests)
+
+`SIGUSR2` will trigger [hammerTime](https://github.com/fvbock/endless#hammer-time)
+
+`SIGUSR1` and `SIGTSTP` are listened for but do not trigger anything in the endless server itself. (porbably useless - might get rid of those two)
+
+You can hook your own functions to be called *pre* or *post* signal handling - eg. pre fork or pre shutdown. More about that in the [hook examle](https://github.com/fvbock/endless/tree/master/examples#hooking-into-the-signal-handling).
 
 
 ## Limitation: No changing of ports
