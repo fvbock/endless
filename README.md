@@ -35,7 +35,7 @@ These have impact on endless by potentially not letting the parent process die u
 
 To deal with hanging requests on the parent after restarting endless will *hammer* the parent 60 seconds after recieving the shutdown signal from the forked child process. When hammered still running requests get terminated. This behaviour can be controlled by another exported another variable:
 
-    DefaultHammerTime time.Duiration
+    DefaultHammerTime time.Duration
 
 The default is 60 seconds. When set to `-1` `hammerTime()` is not invoked automatically. You can then hammer the parent manually by sending `SIGUSR2`. This will only hammer the parent if it is already in shutdown mode. So unless the process had received a `SIGTERM`, `SIGSTOP`, or `SIGINT` (manually or by forking) before `SIGUSR2` will be ignored.
 
