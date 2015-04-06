@@ -2,6 +2,7 @@
 
 Zero downtime restarts for golang HTTP and HTTPS servers.
 
+
 ## Inspiration & Credits
 
 Well... it's what you want right - no need to hook in and out on a loadbalancer or something - just compile, SIGHUP, start new one, finish old requests etc.
@@ -19,6 +20,7 @@ I found the excellent post [Graceful Restart in Golang](http://grisha.org/blog/2
 - Signal hooks to execute your own code before or after the listened to signals (SIGHUP, SIGUSR1, SIGUSR2, SIGINT, SIGTERM, SIGTSTP)
 - You can start multiple servers from one binary and endless will take care of the different sockets/ports assignments when restarting
 
+
 ## Default Timeouts & MaxHeaderBytes
 
 There are three variables exported by the package that control the values set for `DefaultWriteTimeOut`, `DefaultWriteTimeOut`, and `MaxHeaderBytes` on the inner [`http.Server`](https://golang.org/pkg/net/http/#Server):
@@ -30,6 +32,7 @@ There are three variables exported by the package that control the values set fo
 The endless default behaviour is to use the same defaults defined in `net/http`.
 
 These have impact on endless by potentially not letting the parent process die until all connections are handled/finished.
+
 
 ### Hammer Time
 
@@ -44,6 +47,13 @@ If you had hanging requests and the server got hammered you will see a log messa
     2015/04/04 13:04:10 [STOP - Hammer Time] Forcefully shutting down parent
 
 
+## Examples & Documentation
+
+Examples are in [here](https://github.com/fvbock/endless/tree/master/examples)
+
+And there is also [Godoc Documentation](https://godoc.org/github.com/fvbock/endless)
+
+
 ## Limitation: No changing of ports
 
 Currently you cannot restart a server on a different port than the previous version was running on.
@@ -54,8 +64,3 @@ Currently you cannot restart a server on a different port than the previous vers
 - tests
 - documentation
 - less ugly wrapping of the tls.listener
-
-
-## Examples
-
-are in https://github.com/fvbock/endless/tree/master/examples
