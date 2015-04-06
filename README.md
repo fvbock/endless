@@ -56,6 +56,7 @@ and then replacing `http.ListenAndServe` with `endless.ListenAndServe` or `http.
 
 	err := endless.ListenAndServe("localhost:4242", handler)
 
+After starting your server you can make some changes, build, and send `SIGHUP` to the running process and it will finish handling any outstanding requests and serve all new incomming ones with the new binary.
 
 More examples are in [here](https://github.com/fvbock/endless/tree/master/examples)
 
