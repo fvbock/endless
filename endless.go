@@ -20,6 +20,11 @@ import (
 const (
 	PRE_SIGNAL  = 0
 	POST_SIGNAL = 1
+
+	STATE_INIT = iota
+	STATE_RUNNING
+	STATE_SHUTTING_DOWN
+	STATE_TERMINATE
 )
 
 var (
@@ -34,13 +39,6 @@ var (
 	DefaultHammerTime     time.Duration
 
 	isChild bool
-)
-
-const (
-	STATE_INIT = iota
-	STATE_RUNNING
-	STATE_SHUTTING_DOWN
-	STATE_TERMINATE
 )
 
 func init() {
@@ -69,6 +67,10 @@ type endlessServer struct {
 	state            uint8
 }
 
+/*
+NewServer returns an intialized endlessServer Object. Calling Serve on it will
+actually "start" the server.
+*/
 func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	srv = &endlessServer{
 		wg:      sync.WaitGroup{},
@@ -109,6 +111,38 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	return
 }
 
+/*
+ListenAndServe listens on the TCP network address addr and then calls Serve
+with handler to handle requests on incoming connections. Handler is typically
+nil, in which case the DefaultServeMux is used.
+*/
+func ListenAndServe(addr string, handler http.Handler) error {
+	server := NewServer(addr, handler)
+	return server.ListenAndServe()
+}
+
+/*
+ListenAndServeTLS acts identically to ListenAndServe, except that it expects
+HTTPS connections. Additionally, files containing a certificate and matching
+private key for the server must be provided. If the certificate is signed by a
+certificate authority, the certFile should be the concatenation of the server's
+certificate followed by the CA's certificate.
+*/
+func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
+	server := NewServer(addr, handler)
+	return server.ListenAndServeTLS(certFile, keyFile)
+}
+
+/*
+Serve accepts incoming HTTP connections on the listener l, creating a new
+service goroutine for each. The service goroutines read requests and then call
+handler to reply to them. Handler is typically nil, in which case the
+DefaultServeMux is used.
+
+In addition to the stl Serve behaviour each connection is added to a
+sync.Waitgroup so that all outstanding connections can be served before shutting
+down the server.
+*/
 func (srv *endlessServer) Serve() (err error) {
 	srv.state = STATE_RUNNING
 	err = srv.Server.Serve(srv.EndlessListener)
@@ -118,11 +152,11 @@ func (srv *endlessServer) Serve() (err error) {
 	return
 }
 
-func ListenAndServe(addr string, handler http.Handler) error {
-	server := NewServer(addr, handler)
-	return server.ListenAndServe()
-}
-
+/*
+ListenAndServe listens on the TCP network address srv.Addr and then calls Serve
+to handle requests on incoming connections. If srv.Addr is blank, ":http" is
+used.
+*/
 func (srv *endlessServer) ListenAndServe() (err error) {
 	addr := srv.Addr
 	if addr == "" {
@@ -147,11 +181,17 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 	return srv.Serve()
 }
 
-func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
-	server := NewServer(addr, handler)
-	return server.ListenAndServeTLS(certFile, keyFile)
-}
+/*
+ListenAndServeTLS listens on the TCP network address srv.Addr and then calls
+Serve to handle requests on incoming TLS connections.
 
+Filenames containing a certificate and matching private key for the server must
+be provided. If the certificate is signed by a certificate authority, the
+certFile should be the concatenation of the server's certificate followed by the
+CA's certificate.
+
+If srv.Addr is blank, ":https" is used.
+*/
 func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error) {
 	addr := srv.Addr
 	if addr == "" {
@@ -191,6 +231,10 @@ func (srv *endlessServer) ListenAndServeTLS(certFile, keyFile string) (err error
 	return srv.Serve()
 }
 
+/*
+getListener either opens a new socket to listen on, or takes the acceptor socket
+it got passed when restarted.
+*/
 func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) {
 	if srv.isChild {
 		var ptrOffset uint = 0
@@ -216,6 +260,10 @@ func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) 
 	return
 }
 
+/*
+handleSignals listens for os Signals and calls any hooked in function that the
+user had registered with the signal.
+*/
 func (srv *endlessServer) handleSignals() {
 	var sig os.Signal
 
@@ -274,6 +322,7 @@ func (srv *endlessServer) shutdown() {
 	if srv.state != STATE_RUNNING {
 		return
 	}
+
 	srv.state = STATE_SHUTTING_DOWN
 	if DefaultHammerTime >= 0 {
 		go srv.hammerTime(DefaultHammerTime)
