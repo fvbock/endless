@@ -318,6 +318,11 @@ func (srv *endlessServer) signalHooks(ppFlag int, sig os.Signal) {
 	return
 }
 
+/*
+shutdown closes the listener so that no new connections are accepted. it also
+starts a goroutine that will hammer (stop all running requests) the server
+after DefaultHammerTime.
+*/
 func (srv *endlessServer) shutdown() {
 	if srv.state != STATE_RUNNING {
 		return
@@ -396,6 +401,11 @@ func (srv *endlessServer) fork() (err error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.ExtraFiles = files
+	// cmd.SysProcAttr = &syscall.SysProcAttr{
+	// 	Setsid:  true,
+	// 	Setctty: true,
+	// 	Ctty:    ,
+	// }
 
 	err = cmd.Start()
 	if err != nil {
@@ -437,6 +447,9 @@ func newEndlessListener(l net.Listener, srv *endlessServer) (el *endlessListener
 		server:   srv,
 	}
 
+	// Starting the listener for the stop signal here because Accept blocks on
+	// el.Listener.(*net.TCPListener).AcceptTCP()
+	// The goroutine will unblock it by closing the listeners fd
 	go func() {
 		_ = <-el.stop
 		el.stopped = true
