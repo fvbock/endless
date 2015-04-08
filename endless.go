@@ -86,7 +86,6 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 		for i, addr := range strings.Split(socketOrder, ",") {
 			socketPtrOffsetMap[addr] = uint(i)
 		}
-		log.Println(":::", socketPtrOffsetMap)
 	} else {
 		socketPtrOffsetMap[addr] = uint(len(runningServersOrder))
 	}
@@ -281,16 +280,6 @@ handleSignals listens for os Signals and calls any hooked in function that the
 user had registered with the signal.
 */
 func (srv *endlessServer) handleSignals() {
-	// we need only one instance of this - even if there are more than one
-	// listener running.
-	// runningServerReg.Lock()
-	// if signalHandlingRunning {
-	// 	runningServerReg.Unlock()
-	// 	return
-	// }
-	// signalHandlingRunning = true
-	// runningServerReg.Unlock()
-
 	var sig os.Signal
 
 	signal.Notify(
@@ -407,28 +396,26 @@ func (srv *endlessServer) fork() (err error) {
 	runningServersForked = true
 
 	var files = make([]*os.File, len(runningServers))
+	var orderArgs = make([]string, len(runningServers))
 	// get the accessor socket fds for _all_ server instances
 	for _, srvPtr := range runningServers {
 		// introspect.PrintTypeDump(srvPtr.EndlessListener)
-		log.Println(";;;;", srvPtr.Server.Addr, socketPtrOffsetMap[srvPtr.Server.Addr])
 		switch srvPtr.EndlessListener.(type) {
 		case *endlessListener:
-			// log.Println("normal listener")
-			// files = append(files, srvPtr.EndlessListener.(*endlessListener).File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
-			files[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.EndlessListener.(*endlessListener).File() // returns a dup(2) - FD_CLOEXEC flag *not* set
+			// normal listener
+			files[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.EndlessListener.(*endlessListener).File()
 		default:
-			// log.Println("tls listener")
-			// files = append(files, srvPtr.tlsInnerListener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
-			files[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.tlsInnerListener.File() // returns a dup(2) - FD_CLOEXEC flag *not* set
-
+			// tls listener
+			files[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.tlsInnerListener.File()
 		}
+		orderArgs[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.Server.Addr
 	}
 
 	log.Println(files)
 	path := os.Args[0]
 	args := []string{"-continue"}
 	if len(runningServers) > 1 {
-		args = append(args, fmt.Sprintf(`-socketorder=%s`, strings.Join(runningServersOrder, ",")))
+		args = append(args, fmt.Sprintf(`-socketorder=%s`, strings.Join(orderArgs, ",")))
 		log.Println(args)
 	}
 
@@ -502,6 +489,7 @@ func (el *endlessListener) Close() error {
 }
 
 func (el *endlessListener) File() *os.File {
+	// returns a dup(2) - FD_CLOEXEC flag *not* set
 	tl := el.Listener.(*net.TCPListener)
 	fl, _ := tl.File()
 	return fl
