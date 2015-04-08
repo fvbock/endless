@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -28,26 +29,30 @@ const (
 )
 
 var (
-	runningServerReg     sync.Mutex
-	runningServers       map[string]*endlessServer
-	runningServersOrder  map[int]string
-	runningServersForked bool
+	runningServerReg      sync.Mutex
+	runningServers        map[string]*endlessServer
+	runningServersOrder   []string
+	socketPtrOffsetMap    map[string]uint
+	runningServersForked  bool
+	signalHandlingRunning bool
 
 	DefaultReadTimeOut    time.Duration
 	DefaultWriteTimeOut   time.Duration
 	DefaultMaxHeaderBytes int
 	DefaultHammerTime     time.Duration
 
-	isChild bool
+	isChild     bool
+	socketOrder string
 )
 
 func init() {
 	flag.BoolVar(&isChild, "continue", false, "listen on open fd (after forking)")
-	flag.Parse()
+	flag.StringVar(&socketOrder, "socketorder", "", "previous initialization order - used when more than one listener was started")
 
 	runningServerReg = sync.Mutex{}
 	runningServers = make(map[string]*endlessServer)
-	runningServersOrder = make(map[int]string)
+	runningServersOrder = []string{}
+	socketPtrOffsetMap = make(map[string]uint)
 
 	DefaultMaxHeaderBytes = 0 // use http.DefaultMaxHeaderBytes - which currently is 1 << 20 (1MB)
 
@@ -72,6 +77,20 @@ NewServer returns an intialized endlessServer Object. Calling Serve on it will
 actually "start" the server.
 */
 func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
+	runningServerReg.Lock()
+	defer runningServerReg.Unlock()
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	if len(socketOrder) > 0 {
+		for i, addr := range strings.Split(socketOrder, ",") {
+			socketPtrOffsetMap[addr] = uint(i)
+		}
+		log.Println(":::", socketPtrOffsetMap)
+	} else {
+		socketPtrOffsetMap[addr] = uint(len(runningServersOrder))
+	}
+
 	srv = &endlessServer{
 		wg:      sync.WaitGroup{},
 		sigChan: make(chan os.Signal),
@@ -103,10 +122,8 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes
 	srv.Server.Handler = handler
 
-	runningServerReg.Lock()
-	runningServersOrder[len(runningServers)] = addr
+	runningServersOrder = append(runningServersOrder, addr)
 	runningServers[addr] = srv
-	runningServerReg.Unlock()
 
 	return
 }
@@ -238,12 +255,11 @@ it got passed when restarted.
 func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) {
 	if srv.isChild {
 		var ptrOffset uint = 0
-		for i, addr := range runningServersOrder {
-			if addr == laddr {
-				ptrOffset = uint(i)
-				break
-			}
+		if len(socketPtrOffsetMap) > 0 {
+			ptrOffset = socketPtrOffsetMap[laddr]
+			log.Println("laddr", laddr, "ptr offset", socketPtrOffsetMap[laddr])
 		}
+
 		f := os.NewFile(uintptr(3+ptrOffset), "")
 		l, err = net.FileListener(f)
 		if err != nil {
@@ -265,6 +281,16 @@ handleSignals listens for os Signals and calls any hooked in function that the
 user had registered with the signal.
 */
 func (srv *endlessServer) handleSignals() {
+	// we need only one instance of this - even if there are more than one
+	// listener running.
+	// runningServerReg.Lock()
+	// if signalHandlingRunning {
+	// 	runningServerReg.Unlock()
+	// 	return
+	// }
+	// signalHandlingRunning = true
+	// runningServerReg.Unlock()
+
 	var sig os.Signal
 
 	signal.Notify(
@@ -380,22 +406,31 @@ func (srv *endlessServer) fork() (err error) {
 	}
 	runningServersForked = true
 
-	var files []*os.File
+	var files = make([]*os.File, len(runningServers))
 	// get the accessor socket fds for _all_ server instances
 	for _, srvPtr := range runningServers {
 		// introspect.PrintTypeDump(srvPtr.EndlessListener)
+		log.Println(";;;;", srvPtr.Server.Addr, socketPtrOffsetMap[srvPtr.Server.Addr])
 		switch srvPtr.EndlessListener.(type) {
 		case *endlessListener:
 			// log.Println("normal listener")
-			files = append(files, srvPtr.EndlessListener.(*endlessListener).File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+			// files = append(files, srvPtr.EndlessListener.(*endlessListener).File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+			files[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.EndlessListener.(*endlessListener).File() // returns a dup(2) - FD_CLOEXEC flag *not* set
 		default:
 			// log.Println("tls listener")
-			files = append(files, srvPtr.tlsInnerListener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+			// files = append(files, srvPtr.tlsInnerListener.File()) // returns a dup(2) - FD_CLOEXEC flag *not* set
+			files[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.tlsInnerListener.File() // returns a dup(2) - FD_CLOEXEC flag *not* set
+
 		}
 	}
 
+	log.Println(files)
 	path := os.Args[0]
 	args := []string{"-continue"}
+	if len(runningServers) > 1 {
+		args = append(args, fmt.Sprintf(`-socketorder=%s`, strings.Join(runningServersOrder, ",")))
+		log.Println(args)
+	}
 
 	cmd := exec.Command(path, args...)
 	cmd.Stdout = os.Stdout

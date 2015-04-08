@@ -40,6 +40,7 @@ func main() {
 	w := sync.WaitGroup{}
 	w.Add(2)
 	go func() {
+		time.Sleep(time.Second)
 		err := endless.ListenAndServe("localhost:4242", mux1)
 		if err != nil {
 			log.Println(err)
