@@ -37,7 +37,7 @@ These have impact on endless by potentially not letting the parent process die u
 
 ### Hammer Time
 
-To deal with hanging requests on the parent after restarting endless will *hammer* the parent 60 seconds after recieving the shutdown signal from the forked child process. When hammered still running requests get terminated. This behaviour can be controlled by another exported another variable:
+To deal with hanging requests on the parent after restarting endless will *hammer* the parent 60 seconds after recieving the shutdown signal from the forked child process. When hammered still running requests get terminated. This behaviour can be controlled by another exported variable:
 
     DefaultHammerTime time.Duration
 
