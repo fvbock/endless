@@ -413,7 +413,16 @@ func (srv *endlessServer) fork() (err error) {
 
 	log.Println(files)
 	path := os.Args[0]
-	args := []string{"-continue"}
+	var args []string
+	if len(os.Args) > 1 {
+		for _, arg := range os.Args[1:] {
+			if arg == "-continue" {
+				break
+			}
+			args = append(args, arg)
+		}
+	}
+	args = append(args, "-continue")
 	if len(runningServers) > 1 {
 		args = append(args, fmt.Sprintf(`-socketorder=%s`, strings.Join(orderArgs, ",")))
 		log.Println(args)
