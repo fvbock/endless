@@ -480,6 +480,9 @@ func newEndlessListener(l net.Listener, srv *endlessServer) (el *endlessListener
 	// Starting the listener for the stop signal here because Accept blocks on
 	// el.Listener.(*net.TCPListener).AcceptTCP()
 	// The goroutine will unblock it by closing the listeners fd
+	//here
+	//TCPListener with Close() method that contains fd.Close() itself
+	//So, I cannot get this.
 	go func() {
 		_ = <-el.stop
 		el.stopped = true
