@@ -29,12 +29,11 @@ const (
 )
 
 var (
-	runningServerReg      sync.Mutex
-	runningServers        map[string]*endlessServer
-	runningServersOrder   []string
-	socketPtrOffsetMap    map[string]uint
-	runningServersForked  bool
-	signalHandlingRunning bool
+	runningServerReg     sync.Mutex
+	runningServers       map[string]*endlessServer
+	runningServersOrder  []string
+	socketPtrOffsetMap   map[string]uint
+	runningServersForked bool
 
 	DefaultReadTimeOut    time.Duration
 	DefaultWriteTimeOut   time.Duration
