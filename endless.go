@@ -159,6 +159,7 @@ sync.Waitgroup so that all outstanding connections can be served before shutting
 down the server.
 */
 func (srv *endlessServer) Serve() (err error) {
+	defer log.Println(syscall.Getpid(), "Serve() returning...")
 	srv.state = STATE_RUNNING
 	err = srv.Server.Serve(srv.EndlessListener)
 	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
@@ -447,7 +448,6 @@ func (srv *endlessServer) fork() (err error) {
 
 type endlessListener struct {
 	net.Listener
-	stop    chan error
 	stopped bool
 	server  *endlessServer
 }
@@ -473,18 +473,9 @@ func (el *endlessListener) Accept() (c net.Conn, err error) {
 func newEndlessListener(l net.Listener, srv *endlessServer) (el *endlessListener) {
 	el = &endlessListener{
 		Listener: l,
-		stop:     make(chan error),
 		server:   srv,
 	}
 
-	// Starting the listener for the stop signal here because Accept blocks on
-	// el.Listener.(*net.TCPListener).AcceptTCP()
-	// The goroutine will unblock it by closing the listeners fd
-	go func() {
-		_ = <-el.stop
-		el.stopped = true
-		el.stop <- el.Listener.Close()
-	}()
 	return
 }
 
@@ -492,8 +483,9 @@ func (el *endlessListener) Close() error {
 	if el.stopped {
 		return syscall.EINVAL
 	}
-	el.stop <- nil
-	return <-el.stop
+
+	el.stopped = true
+	return el.Listener.Close()
 }
 
 func (el *endlessListener) File() *os.File {
