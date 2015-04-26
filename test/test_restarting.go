@@ -43,7 +43,7 @@ func compileAndStartTestServer() {
 }
 
 func runAB() (err error) {
-	cmd := exec.Command("ab", []string{"-c 100", "-n 1000", "http://localhost:4242/foo"}...)
+	cmd := exec.Command("ab", []string{"-c 100", "-n 10000", "http://localhost:4242/foo"}...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
