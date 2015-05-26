@@ -256,7 +256,7 @@ func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) 
 		var ptrOffset uint = 0
 		if len(socketPtrOffsetMap) > 0 {
 			ptrOffset = socketPtrOffsetMap[laddr]
-			log.Println("laddr", laddr, "ptr offset", socketPtrOffsetMap[laddr])
+			// log.Println("laddr", laddr, "ptr offset", socketPtrOffsetMap[laddr])
 		}
 
 		f := os.NewFile(uintptr(3+ptrOffset), "")
@@ -411,7 +411,7 @@ func (srv *endlessServer) fork() (err error) {
 		orderArgs[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.Server.Addr
 	}
 
-	log.Println(files)
+	// log.Println(files)
 	path := os.Args[0]
 	var args []string
 	if len(os.Args) > 1 {
@@ -425,7 +425,7 @@ func (srv *endlessServer) fork() (err error) {
 	args = append(args, "-continue")
 	if len(runningServers) > 1 {
 		args = append(args, fmt.Sprintf(`-socketorder=%s`, strings.Join(orderArgs, ",")))
-		log.Println(args)
+		// log.Println(args)
 	}
 
 	cmd := exec.Command(path, args...)
