@@ -503,6 +503,9 @@ type endlessConn struct {
 }
 
 func (w endlessConn) Close() error {
-	w.server.wg.Done()
-	return w.Conn.Close()
+    err := w.Conn.Close()
+    if err == nil {
+        w.server.wg.Done()
+    }
+    return err
 }
