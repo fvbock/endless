@@ -2,7 +2,6 @@ package endless
 
 import (
 	"crypto/tls"
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -45,9 +44,6 @@ var (
 )
 
 func init() {
-	flag.BoolVar(&isChild, "continue", false, "listen on open fd (after forking)")
-	flag.StringVar(&socketOrder, "socketorder", "", "previous initialization order - used when more than one listener was started")
-
 	runningServerReg = sync.Mutex{}
 	runningServers = make(map[string]*endlessServer)
 	runningServersOrder = []string{}
@@ -78,9 +74,10 @@ actually "start" the server.
 func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
-	if !flag.Parsed() {
-		flag.Parse()
-	}
+
+	socketOrder = os.Getenv("ENDLESS_SOCKET_ORDER")
+	isChild = os.Getenv("ENDLESS_CONTINUE") != ""
+
 	if len(socketOrder) > 0 {
 		for i, addr := range strings.Split(socketOrder, ",") {
 			socketPtrOffsetMap[addr] = uint(i)
@@ -413,27 +410,27 @@ func (srv *endlessServer) fork() (err error) {
 		orderArgs[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.Server.Addr
 	}
 
+	env := append(
+		os.Environ(),
+		"ENDLESS_CONTINUE=1",
+	)
+	if len(runningServers) > 1 {
+		env = append(env, fmt.Sprintf(`ENDLESS_SOCKET_ORDER=%s`, strings.Join(orderArgs, ",")))
+	}
+
 	// log.Println(files)
 	path := os.Args[0]
 	var args []string
 	if len(os.Args) > 1 {
-		for _, arg := range os.Args[1:] {
-			if arg == "-continue" {
-				break
-			}
-			args = append(args, arg)
-		}
-	}
-	args = append(args, "-continue")
-	if len(runningServers) > 1 {
-		args = append(args, fmt.Sprintf(`-socketorder=%s`, strings.Join(orderArgs, ",")))
-		// log.Println(args)
+		args = os.Args[1:]
 	}
 
 	cmd := exec.Command(path, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.ExtraFiles = files
+	cmd.Env = env
+
 	// cmd.SysProcAttr = &syscall.SysProcAttr{
 	// 	Setsid:  true,
 	// 	Setctty: true,
