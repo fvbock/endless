@@ -69,6 +69,7 @@ type endlessServer struct {
 	sigChan          chan os.Signal
 	isChild          bool
 	state            uint8
+	lock             *sync.RWMutex
 }
 
 /*
@@ -112,6 +113,7 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 			},
 		},
 		state: STATE_INIT,
+		lock:  &sync.RWMutex{},
 	}
 
 	srv.Server.Addr = addr
@@ -148,6 +150,20 @@ func ListenAndServeTLS(addr string, certFile string, keyFile string, handler htt
 	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
+func (srv *endlessServer) getState() uint8 {
+	srv.lock.RLock()
+	defer srv.lock.RUnlock()
+
+	return srv.state
+}
+
+func (srv *endlessServer) setState(st uint8) {
+	srv.lock.Lock()
+	defer srv.lock.Unlock()
+
+	srv.state = st
+}
+
 /*
 Serve accepts incoming HTTP connections on the listener l, creating a new
 service goroutine for each. The service goroutines read requests and then call
@@ -160,11 +176,11 @@ down the server.
 */
 func (srv *endlessServer) Serve() (err error) {
 	defer log.Println(syscall.Getpid(), "Serve() returning...")
-	srv.state = STATE_RUNNING
+	srv.setState(STATE_RUNNING)
 	err = srv.Server.Serve(srv.EndlessListener)
 	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
 	srv.wg.Wait()
-	srv.state = STATE_TERMINATE
+	srv.setState(STATE_TERMINATE)
 	return
 }
 
@@ -339,11 +355,11 @@ starts a goroutine that will hammer (stop all running requests) the server
 after DefaultHammerTime.
 */
 func (srv *endlessServer) shutdown() {
-	if srv.state != STATE_RUNNING {
+	if srv.getState() != STATE_RUNNING {
 		return
 	}
 
-	srv.state = STATE_SHUTTING_DOWN
+	srv.setState(STATE_SHUTTING_DOWN)
 	if DefaultHammerTime >= 0 {
 		go srv.hammerTime(DefaultHammerTime)
 	}
@@ -375,13 +391,13 @@ func (srv *endlessServer) hammerTime(d time.Duration) {
 			log.Println("WaitGroup at 0", r)
 		}
 	}()
-	if srv.state != STATE_SHUTTING_DOWN {
+	if srv.getState() != STATE_SHUTTING_DOWN {
 		return
 	}
 	time.Sleep(d)
 	log.Println("[STOP - Hammer Time] Forcefully shutting down parent")
 	for {
-		if srv.state == STATE_TERMINATE {
+		if srv.getState() == STATE_TERMINATE {
 			break
 		}
 		srv.wg.Done()
@@ -503,9 +519,9 @@ type endlessConn struct {
 }
 
 func (w endlessConn) Close() error {
-    err := w.Conn.Close()
-    if err == nil {
-        w.server.wg.Done()
-    }
-    return err
+	err := w.Conn.Close()
+	if err == nil {
+		w.server.wg.Done()
+	}
+	return err
 }
