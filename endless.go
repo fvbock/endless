@@ -271,7 +271,7 @@ func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) 
 	if srv.isChild {
 		var ptrOffset uint = 0
 		runningServerReg.RLock()
-		defer runningServerReg.Unlock()
+		defer runningServerReg.RUnlock()
 		if len(socketPtrOffsetMap) > 0 {
 			ptrOffset = socketPtrOffsetMap[laddr]
 			// log.Println("laddr", laddr, "ptr offset", socketPtrOffsetMap[laddr])
