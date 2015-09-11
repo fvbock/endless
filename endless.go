@@ -29,7 +29,7 @@ const (
 )
 
 var (
-	runningServerReg     sync.Mutex
+	runningServerReg     sync.RWMutex
 	runningServers       map[string]*endlessServer
 	runningServersOrder  []string
 	socketPtrOffsetMap   map[string]uint
@@ -48,7 +48,7 @@ func init() {
 	flag.BoolVar(&isChild, "continue", false, "listen on open fd (after forking)")
 	flag.StringVar(&socketOrder, "socketorder", "", "previous initialization order - used when more than one listener was started")
 
-	runningServerReg = sync.Mutex{}
+	runningServerReg = sync.RWMutex{}
 	runningServers = make(map[string]*endlessServer)
 	runningServersOrder = []string{}
 	socketPtrOffsetMap = make(map[string]uint)
@@ -270,6 +270,8 @@ it got passed when restarted.
 func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) {
 	if srv.isChild {
 		var ptrOffset uint = 0
+		runningServerReg.RLock()
+		defer runningServerReg.Unlock()
 		if len(socketPtrOffsetMap) > 0 {
 			ptrOffset = socketPtrOffsetMap[laddr]
 			// log.Println("laddr", laddr, "ptr offset", socketPtrOffsetMap[laddr])
