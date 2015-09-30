@@ -44,6 +44,8 @@ var (
 
 	isChild     bool
 	socketOrder string
+
+	hookableSignals []os.Signal
 )
 
 func init() {
@@ -60,6 +62,15 @@ func init() {
 	// after a restart the parent will finish ongoing requests before
 	// shutting down. set to a negative value to disable
 	DefaultHammerTime = 60 * time.Second
+
+	hookableSignals = []os.Signal{
+		syscall.SIGHUP,
+		syscall.SIGUSR1,
+		syscall.SIGUSR2,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGTSTP,
+	}
 }
 
 type endlessServer struct {
@@ -304,12 +315,7 @@ func (srv *endlessServer) handleSignals() {
 
 	signal.Notify(
 		srv.sigChan,
-		syscall.SIGHUP,
-		syscall.SIGUSR1,
-		syscall.SIGUSR2,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGTSTP,
+		hookableSignals...,
 	)
 
 	pid := syscall.Getpid()
@@ -412,7 +418,7 @@ func (srv *endlessServer) hammerTime(d time.Duration) {
 func (srv *endlessServer) fork() (err error) {
 	// only one server isntance should fork!
 	if runningServersForked {
-		return errors.New("another fork is running")
+		return errors.New("Another process already forked. Ignoring this one.")
 	}
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
@@ -530,4 +536,24 @@ func (w endlessConn) Close() error {
 		w.server.wg.Done()
 	}
 	return err
+}
+
+/*
+RegisterSignalHook registers a function to be run PRE_SIGNAL or POST_SIGNAL for
+a given signal. PRE or POST in this case means before or after the signal
+related code endless itself runs
+*/
+func (srv *endlessServer) RegisterSignalHook(prePost int, sig os.Signal, f func()) (err error) {
+	if prePost != PRE_SIGNAL && prePost != POST_SIGNAL {
+		err = fmt.Errorf("Cannot use %v for prePost arg. Must be endless.PRE_SIGNAL or endless.POST_SIGNAL.")
+		return
+	}
+	for _, s := range hookableSignals {
+		if s == sig {
+			srv.SignalHooks[prePost][sig] = append(srv.SignalHooks[prePost][sig], f)
+			return
+		}
+	}
+	err = fmt.Errorf("Signal %v is not supported.")
+	return
 }
