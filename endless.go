@@ -2,6 +2,7 @@ package endless
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -403,16 +405,18 @@ func (srv *endlessServer) hammerTime(d time.Duration) {
 			break
 		}
 		srv.wg.Done()
+		runtime.Gosched()
 	}
 }
 
 func (srv *endlessServer) fork() (err error) {
 	// only one server isntance should fork!
+	if runningServersForked {
+		return errors.New("another fork is running")
+	}
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
-	if runningServersForked {
-		return
-	}
+
 	runningServersForked = true
 
 	var files = make([]*os.File, len(runningServers))
