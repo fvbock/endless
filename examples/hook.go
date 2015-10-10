@@ -14,12 +14,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("WORLD!"))
 }
 
-func preSigUsr1() {
+func preSigUsr1(sig os.Signal, srv *endless.Server) bool {
 	log.Println("pre SIGUSR1")
+	return true
 }
 
-func postSigUsr1() {
+func postSigUsr1(sig os.Signal, srv *endless.Server) bool {
 	log.Println("post SIGUSR1")
+	return true
 }
 
 func main() {
@@ -28,13 +30,9 @@ func main() {
 		Methods("GET")
 
 	srv := endless.NewServer("localhost:4244", mux1)
-	srv.SignalHooks[endless.PRE_SIGNAL][syscall.SIGUSR1] = append(
-		srv.SignalHooks[endless.PRE_SIGNAL][syscall.SIGUSR1],
-		preSigUsr1)
-	srv.SignalHooks[endless.POST_SIGNAL][syscall.SIGUSR1] = append(
-		srv.SignalHooks[endless.POST_SIGNAL][syscall.SIGUSR1],
-		postSigUsr1)
-
+	h := srv.Handler.(*endless.SignalHandler)
+	h.RegisterPreSignalHook(syscall.SIGUSR1, preSigUsr1)
+	h.RegisterPostSignalHook(syscall.SIGUSR1, postSigUsr1)
 	err := srv.ListenAndServe()
 	if err != nil {
 		log.Println(err)

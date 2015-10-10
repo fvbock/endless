@@ -35,17 +35,17 @@ The endless default behaviour is to use the same defaults defined in `net/http`.
 These have impact on endless by potentially not letting the parent process die until all connections are handled/finished.
 
 
-### Hammer Time
+### Termination
 
-To deal with hanging requests on the parent after restarting endless will *hammer* the parent 60 seconds after receiving the shutdown signal from the forked child process. When hammered still running requests get terminated. This behaviour can be controlled by another exported variable:
+To deal with hanging requests on the parent after restarting endless will *terminate* the parent 60 seconds after receiving the shutdown signal from the forked child process. When terminated still running requests get terminated. This behaviour can be controlled by another exported variable:
 
-    DefaultHammerTime time.Duration
+    DefaultTerminateTimeout time.Duration
 
-The default is 60 seconds. When set to `-1` `hammerTime()` is not invoked automatically. You can then hammer the parent manually by sending `SIGUSR2`. This will only hammer the parent if it is already in shutdown mode. So unless the process had received a `SIGTERM`, `SIGSTOP`, or `SIGINT` (manually or by forking) before `SIGUSR2` will be ignored.
+The default is 60 seconds. When set to `-1` `Terminate()` is not invoked automatically. You can then terminate the parent manually by sending `SIGUSR2`. This will only terminate the parent if it is already in shutdown mode. So unless the process had received a `SIGTERM`, `SIGSTOP`, or `SIGINT` (manually or by forking) before `SIGUSR2` will be ignored.
 
-If you had hanging requests and the server got hammered you will see a log message like this:
+If you had hanging requests and the server got terminate you will see a log message like this:
 
-    2015/04/04 13:04:10 [STOP - Hammer Time] Forcefully shutting down parent
+    2015/04/04 13:04:10 Terminating parent
 
 
 ## Examples & Documentation
@@ -71,7 +71,7 @@ The endless server will listen for the following signals: `syscall.SIGHUP`, `sys
 
 `syscall.SIGINT` and `syscall.SIGTERM` will trigger a shutdown of the server (it will finish running requests)
 
-`SIGUSR2` will trigger [hammerTime](https://github.com/fvbock/endless#hammer-time)
+`SIGUSR2` will trigger [Terminate](https://github.com/fvbock/endless#Termination)
 
 `SIGUSR1` and `SIGTSTP` are listened for but do not trigger anything in the endless server itself. (probably useless - might get rid of those two)
 

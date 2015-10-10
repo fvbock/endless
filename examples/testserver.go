@@ -17,7 +17,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// endless.DefaultHammerTime = 10*time.Second
 	mux := mux.NewRouter()
 	mux.HandleFunc("/foo", handler).
 		Methods("GET")
