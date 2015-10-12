@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// The default Handler for none Windows OS's is the a SignalHandler
+// The default Handler for none Windows OSes is a SignalHandler
 func init() {
 	DefaultHandler = NewSignalHandler()
 }
@@ -58,17 +58,17 @@ func (s *SignalHandler) Handle(srv *Server) {
 
 		switch sig {
 		case syscall.SIGHUP:
-			srv.Println(pid, "Received", sig, "restarting...")
+			srv.Debugln("Received", sig, "restarting...")
 			if err := srv.Restart(); err != nil {
 				srv.Println("Fork err:", err)
 			}
 		case syscall.SIGUSR2:
-			srv.Println(pid, "Received", sig, "terminating...")
+			srv.Debugln("Received", sig, "terminating...")
 			if err := srv.Terminate(0); err != nil {
 				srv.Println(pid, err)
 			}
 		case syscall.SIGINT, syscall.SIGTERM:
-			srv.Println(pid, "Received", sig, "shutting down...")
+			srv.Debugln("Received", sig, "shutting down...")
 			if err := srv.Shutdown(); err != nil {
 				srv.Println(pid, err)
 			}
