@@ -2,22 +2,15 @@ package endless
 
 import (
 	"crypto/tls"
-	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
-
-// ErrNoHandler is the error returned if no Handler was configured on the Server.
-var ErrNoHandler = errors.New("no handler")
 
 // State represents the current state of Server
 type State uint8
@@ -35,7 +28,7 @@ const (
 	// StateShutdown is the state of server when it has shutdown.
 	StateShutdown
 
-	// StateTerminate is the state of server if it was forcibly terminated.
+	// StateTerminated is the state of server if it was forcibly terminated.
 	StateTerminated
 
 	// StateFailed is the state of server if failed unexpectedly.
@@ -69,17 +62,6 @@ func (err *InvalidStateError) Error() string {
 	return fmt.Sprintf("invalid state transition from %v to %v", err.CurrentState, err.RequestedState)
 }
 
-// Internal globals
-var (
-	runningServerReg     sync.RWMutex
-	runningServers       map[string]*Server
-	runningServersOrder  []string
-	socketPtrOffsetMap   map[string]uint
-	runningServersForked bool
-	isChild              bool
-	socketOrder          string
-)
-
 // Default values used on server creation.
 var (
 	// DefaultReadTimeout is the default value assigned to ReadTimeout of Servers.
@@ -95,27 +77,16 @@ var (
 	DefaultTerminateTimeout = 60 * time.Second
 )
 
-func init() {
-	flag.BoolVar(&isChild, "endless-continue", false, "listen on open fd (after forking)")
-	flag.StringVar(&socketOrder, "endless-socketorder", "", "previous initialization order - used when more than one listener was started")
-
-	runningServers = make(map[string]*Server)
-	socketPtrOffsetMap = make(map[string]uint)
-}
-
-// Handler is the interface that objects implement to perform operations on a endless Server
+// Handler is the interface that objects implement to perform operations on a endless Servers.
 type Handler interface {
-	Handle(srv *Server)
+	Handle(*Manager)
+	Stop()
 }
-
-// DefaultHandler is the default handler used when creating a new Server
-var DefaultHandler Handler
 
 // Server represents a endless server.
 type Server struct {
 	http.Server
-	state State
-	Handler
+	state            State
 	Listener         net.Listener
 	tlsInnerListener *Listener
 	wg               sync.WaitGroup
@@ -124,26 +95,15 @@ type Server struct {
 	TerminateTimeout time.Duration
 	Done             chan struct{}
 	Debug            bool
+	Net              string
 }
 
 // NewServer returns an initialized Server Object. Calling Serve on it will
 // actually "start" the server.
-func NewServer(addr string, handler http.Handler) (srv *Server) {
-	runningServerReg.Lock()
-	defer runningServerReg.Unlock()
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-	if len(socketOrder) > 0 {
-		for i, addr := range strings.Split(socketOrder, ",") {
-			socketPtrOffsetMap[addr] = uint(i)
-		}
-	} else {
-		socketPtrOffsetMap[addr] = uint(len(runningServersOrder))
-	}
-
+func NewServer(net, addr string, handler http.Handler) (srv *Server) {
 	srv = &Server{
 		Done: make(chan struct{}),
+		Net:  net,
 	}
 
 	srv.Server.Addr = addr
@@ -151,17 +111,20 @@ func NewServer(addr string, handler http.Handler) (srv *Server) {
 	srv.Server.WriteTimeout = DefaultWriteTimeout
 	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes
 	srv.Server.Handler = handler
-	srv.Handler = DefaultHandler
 	srv.TerminateTimeout = DefaultTerminateTimeout
 
 	srv.BeforeBegin = func(addr string) {
 		srv.Debugln(syscall.Getpid(), addr)
 	}
 
-	runningServersOrder = append(runningServersOrder, addr)
-	runningServers[addr] = srv
+	mgr.RegisterServer(srv)
 
 	return
+}
+
+// AddressKey returns the unique address key for the server.
+func (srv *Server) AddressKey() string {
+	return srv.Net + ":" + srv.Addr
 }
 
 // Printf calls Printf on ErrorLog if not nil otherwise it calls log.Printf.
@@ -189,23 +152,11 @@ func (srv *Server) Debugln(v ...interface{}) {
 	}
 }
 
-// handle calls the Handlers Handle method if not nil, otherwise it returns
-// ErrNoHandler.
-func (srv *Server) handle() error {
-	if srv.Handler == nil {
-		return ErrNoHandler
-	}
-
-	go srv.Handle(srv)
-
-	return nil
-}
-
 // ListenAndServe listens on the TCP network address addr and then calls Serve
 // with handler to handle requests on incoming connections. Handler is typically
 // nil, in which case the DefaultServeMux is used.
 func ListenAndServe(addr string, handler http.Handler) error {
-	server := NewServer(addr, handler)
+	server := NewServer("tcp", addr, handler)
 	return server.ListenAndServe()
 }
 
@@ -215,7 +166,7 @@ func ListenAndServe(addr string, handler http.Handler) error {
 // certificate authority, the certFile should be the concatenation of the server's
 // certificate followed by the CA's certificate.
 func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
-	server := NewServer(addr, handler)
+	server := NewServer("tcp", addr, handler)
 	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
@@ -307,26 +258,19 @@ func (srv *Server) Serve() error {
 // to handle requests on incoming connections. If srv.Addr is blank, ":http" is
 // used.
 func (srv *Server) ListenAndServe() error {
-	addr := srv.Addr
-	if addr == "" {
-		addr = ":http"
+	if srv.Addr == "" {
+		srv.Addr = ":http"
 	}
 
-	if err := srv.handle(); err != nil {
-		return err
-	}
-
-	l, err := srv.getListener(addr)
+	l, err := mgr.Listen(srv)
 	if err != nil {
 		return err
 	}
 
 	srv.Listener = NewListener(l, srv)
 
-	if isChild {
-		if err = kill(syscall.Getppid()); err != nil {
-			return err
-		}
+	if err = mgr.serverListening(); err != nil {
+		return err
 	}
 
 	srv.BeforeBegin(srv.Addr)
@@ -344,9 +288,8 @@ func (srv *Server) ListenAndServe() error {
 //
 // If srv.Addr is blank, ":https" is used.
 func (srv *Server) ListenAndServeTLS(certFile, keyFile string) (err error) {
-	addr := srv.Addr
-	if addr == "" {
-		addr = ":https"
+	if srv.Addr == "" {
+		srv.Addr = ":https"
 	}
 
 	config := &tls.Config{}
@@ -363,12 +306,8 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) (err error) {
 		return
 	}
 
-	if err = srv.handle(); err != nil {
-		return
-	}
-
 	var l net.Listener
-	l, err = srv.getListener(addr)
+	l, err = mgr.Listen(srv)
 	if err != nil {
 		return
 	}
@@ -376,42 +315,13 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) (err error) {
 	srv.tlsInnerListener = NewListener(l, srv)
 	srv.Listener = tls.NewListener(srv.tlsInnerListener, config)
 
-	if isChild {
-		if err = kill(syscall.Getppid()); err != nil {
-			return err
-		}
+	if err = mgr.serverListening(); err != nil {
+		return err
 	}
 
 	srv.BeforeBegin(srv.Addr)
 
 	return srv.Serve()
-}
-
-// getListener either opens a new socket to listen on, or takes the acceptor socket
-// it got passed when restarted.
-func (srv *Server) getListener(laddr string) (l net.Listener, err error) {
-	if isChild {
-		ptrOffset := uint(0)
-		runningServerReg.RLock()
-		defer runningServerReg.RUnlock()
-		if len(socketPtrOffsetMap) > 0 {
-			ptrOffset = socketPtrOffsetMap[laddr]
-		}
-
-		f := os.NewFile(uintptr(3+ptrOffset), "")
-		l, err = net.FileListener(f)
-		if err != nil {
-			err = fmt.Errorf("net.FileListener error: %v", err)
-			return
-		}
-	} else {
-		l, err = net.Listen("tcp", laddr)
-		if err != nil {
-			err = fmt.Errorf("net.Listen error: %v", err)
-			return
-		}
-	}
-	return
 }
 
 // Shutdown closes the Listener so that no new connections are accepted. it also
@@ -455,12 +365,13 @@ func (srv *Server) Terminate(d time.Duration) error {
 	}
 
 	srv.Debugln("Terminating parent")
-	srv.listener().Terminate()
+	srv.EndlessListener().Terminate()
 
 	return srv.setState(StateTerminated)
 }
 
-func (srv *Server) listener() *Listener {
+// EndlessListener returns the underlying endless.Listener.
+func (srv *Server) EndlessListener() *Listener {
 	if l, ok := srv.Listener.(*Listener); ok {
 		// normal listener
 		return l
@@ -470,71 +381,26 @@ func (srv *Server) listener() *Listener {
 	return srv.tlsInnerListener
 }
 
-// Restart restarts the servers with the new binary
-func (srv *Server) Restart() error {
-	runningServerReg.Lock()
-	defer runningServerReg.Unlock()
-
-	// Only one server instance should fork!
-	if runningServersForked {
-		return errors.New("already forked")
-	}
-
-	runningServersForked = true
-
-	var files = make([]*os.File, len(runningServers))
-	var orderArgs = make([]string, len(runningServers))
-	// get the accessor socket fds for _all_ server instances
-	for _, srvPtr := range runningServers {
-		// TODO(steve): process error from File()
-		files[socketPtrOffsetMap[srvPtr.Server.Addr]], _ = srvPtr.listener().File()
-		orderArgs[socketPtrOffsetMap[srvPtr.Server.Addr]] = srvPtr.Server.Addr
-	}
-
-	path := os.Args[0]
-	var args []string
-	if len(os.Args) > 1 {
-		for _, arg := range os.Args[1:] {
-			if arg == "-endless-continue" {
-				break
-			}
-			args = append(args, arg)
-		}
-	}
-	args = append(args, "-endless-continue")
-	if len(runningServers) > 1 {
-		args = append(args, fmt.Sprintf(`-endless-socketorder=%s`, strings.Join(orderArgs, ",")))
-	}
-
-	cmd := exec.Command(path, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.ExtraFiles = files
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("restart: failed: %v", err)
-	}
-
-	return nil
-}
-
+// Listener represents an endless listener.
 type Listener struct {
 	net.Listener
 	server *Server
 	conns  map[net.Conn]struct{}
 }
 
-func (el *Listener) DeleteConn(c net.Conn) {
+func (el *Listener) deleteConn(c net.Conn) {
 	delete(el.conns, c)
 }
 
+// Terminate closes all active connections accepted by the listener.
 func (el *Listener) Terminate() {
 	for c := range el.conns {
 		c.Close()
 	}
 }
 
+// Accept implements the Accept method in the Listener interface; it waits
+// for the next call and returns a generic Conn.
 func (el *Listener) Accept() (net.Conn, error) {
 	c, err := el.Listener.Accept()
 	if err != nil {
@@ -551,6 +417,16 @@ func (el *Listener) Accept() (net.Conn, error) {
 	return wc, nil
 }
 
+// ErrUnsupportedListener is the error returned when the Listener doesn't support a File method.
+type ErrUnsupportedListener struct {
+	net.Listener
+}
+
+func (e *ErrUnsupportedListener) Error() string {
+	return fmt.Sprintf("%T", e.Listener)
+}
+
+// NewListener creates a new Listener.
 func NewListener(l net.Listener, srv *Server) *Listener {
 	return &Listener{
 		Listener: l,
@@ -559,9 +435,17 @@ func NewListener(l net.Listener, srv *Server) *Listener {
 	}
 }
 
+type listenerFile interface {
+	File() (*os.File, error)
+}
+
+// File returns an os.File duplicated from the listener.
 func (el *Listener) File() (*os.File, error) {
 	// returns a dup(2) - FD_CLOEXEC flag *not* set
-	return el.Listener.(*net.TCPListener).File()
+	if t, ok := el.Listener.(listenerFile); ok {
+		return t.File()
+	}
+	return nil, &ErrUnsupportedListener{el.Listener}
 }
 
 type conn struct {
@@ -581,7 +465,7 @@ func (c *conn) Close() error {
 
 	err := c.Conn.Close()
 
-	c.listener.DeleteConn(c)
+	c.listener.deleteConn(c)
 	c.listener.server.wg.Done()
 	c.listener = nil
 

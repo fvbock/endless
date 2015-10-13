@@ -14,12 +14,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("WORLD!"))
 }
 
-func preSigUsr1(sig os.Signal, srv *endless.Server) bool {
+func preSigUsr1(sig os.Signal, m *endless.Manager) bool {
 	log.Println("pre SIGUSR1")
 	return true
 }
 
-func postSigUsr1(sig os.Signal, srv *endless.Server) bool {
+func postSigUsr1(sig os.Signal, m *endless.Manager) bool {
 	log.Println("post SIGUSR1")
 	return true
 }

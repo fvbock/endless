@@ -1,6 +1,7 @@
 package endless
 
 import (
+	"bufio"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -9,11 +10,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 
 type MockHandler struct {
 	mock.Mock
+	req *TestReq
 }
 
 func NewMockHandler() *MockHandler {
@@ -30,8 +34,14 @@ func NewMockHandler() *MockHandler {
 }
 
 func (h *MockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	args := h.Called(r.URL.Path)
-	tr := args.Get(0).(*TestReq)
+	var tr *TestReq
+	if h.req != nil {
+		tr = h.req
+	} else {
+		args := h.Called(r.URL.Path)
+		tr = args.Get(0).(*TestReq)
+	}
+
 	v := tr.URL.Query()
 	sleep := v.Get("sleep")
 	if sleep != "" {
@@ -56,16 +66,22 @@ type TestServer struct {
 }
 
 const TestAddr = ":4242"
+const TestNet = "tcp"
 
 func NewTestServer(h http.Handler) *TestServer {
 	return &TestServer{
-		Server: NewServer(TestAddr, h),
+		Server: NewServer(TestNet, TestAddr, h),
 		errs:   make([]error, 0, 10),
 	}
 }
 
 func (s TestServer) ListenAndServe() error {
 	s.servErr = s.Server.ListenAndServe()
+	select {
+	case <-s.Done:
+	default:
+		close(s.Done)
+	}
 	return s.servErr
 }
 
@@ -73,6 +89,11 @@ func (s TestServer) ListenAndServeTLS() error {
 	s.servErr = s.Server.ListenAndServeTLS(s.certFile, s.keyFile)
 	os.Remove(s.certFile)
 	os.Remove(s.keyFile)
+	select {
+	case <-s.Done:
+	default:
+		close(s.Done)
+	}
 	return s.servErr
 }
 
@@ -128,19 +149,28 @@ func (s *TestServer) CreateCert() error {
 	if err != nil {
 		return err
 	}
-	s.certFile = certOut.Name()
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	certOut.Close()
+	defer certOut.Close()
+
+	if err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		os.Remove(certOut.Name())
+		return err
+	}
 
 	keyOut, err := ioutil.TempFile("", "test")
 	if err != nil {
-		os.Remove(s.certFile)
-		s.certFile = ""
+		os.Remove(certOut.Name())
 		return err
 	}
+	defer keyOut.Close()
+
+	if err = pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}); err != nil {
+		os.Remove(certOut.Name())
+		os.Remove(keyOut.Name())
+		return err
+	}
+
+	s.certFile = certOut.Name()
 	s.keyFile = keyOut.Name()
-	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	keyOut.Close()
 
 	return nil
 }
@@ -152,19 +182,28 @@ func (s *TestServer) Run(tls bool) error {
 		}
 	}
 	go func() {
+		var err error
 		if tls {
-			s.ListenAndServeTLS()
+			err = s.ListenAndServeTLS()
 		} else {
-			s.ListenAndServe()
+			err = s.ListenAndServe()
+		}
+
+		if err != nil {
+			log.Println("error:", err)
 		}
 	}()
 
 	for s.GetState() == StateInit {
 		select {
 		case <-time.After(10 * time.Millisecond):
-			// ListenAndServe should be running now
+			// Retest to see if its running yet
 		case <-s.Done:
-			// Unexpected exit
+			if s.servErr != nil {
+				return s.servErr
+			}
+
+			return fmt.Errorf("unexpected exit")
 		}
 	}
 
@@ -192,7 +231,10 @@ func NewTestReq(t *testing.T, h *MockHandler, urlStr string) *TestReq {
 		Body:       "body",
 		t:          t,
 	}
-	h.On("ServeHTTP", r.URL.Path).Return(r)
+
+	if h != nil {
+		h.On("ServeHTTP", r.URL.Path).Return(r)
+	}
 
 	return r
 }
@@ -232,6 +274,82 @@ var TestTransport = &http.Transport{
 	TLSHandshakeTimeout: time.Second,
 }
 var TestClient = &http.Client{Transport: TestTransport}
+
+func serverHelper() *exec.Cmd {
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
+	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+
+	return cmd
+}
+
+// TestHelperProcess isn't a real test. It's used as a helper process.
+func TestHelperProcess(t *testing.T) {
+	log.SetPrefix(fmt.Sprintf("child: %v - ", os.Getpid()))
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "" {
+		t.Skip("test helper")
+	}
+
+	args := os.Args
+	for len(args) > 0 {
+		if args[0] == "--" {
+			args = args[1:]
+			break
+		}
+		args = args[1:]
+	}
+
+	h := NewMockHandler()
+	h.req = NewTestReq(t, h, "/test")
+	s := NewTestServer(h)
+	err := s.Run(false)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("ready")
+
+	if err := processCmds(os.Stdin); err != nil {
+		log.Fatal(err)
+	}
+
+	s.TerminateTimeout = 0
+	if err := s.Shutdown(); err != nil {
+		log.Fatal(err)
+	}
+
+	<-s.Done
+}
+
+func processCmds(f io.ReadCloser) error {
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		txt := scanner.Text()
+		switch txt {
+		case "restart":
+			if _, err := Restart(); err != nil {
+				return err
+			}
+			fmt.Println("restart")
+		case "shutdown":
+			if err := Shutdown(); err != nil {
+				return err
+			}
+			fmt.Println("shutdown")
+		case "terminate":
+			if err := Terminate(0); err != nil {
+				return err
+			}
+			fmt.Println("terminate")
+		case "done":
+			fmt.Println("done")
+			break
+		default:
+			return fmt.Errorf("unrecognised cmd: %v", txt)
+		}
+	}
+
+	return scanner.Err()
+}
 
 func TestShutdown(t *testing.T) {
 	s := NewTestServer(NewMockHandler())
@@ -322,4 +440,55 @@ func TestTerminateHandler(t *testing.T) {
 	<-s.Done
 	assert.NoError(t, s.servErr)
 	assert.Equal(t, StateTerminated, s.GetState())
+}
+
+func readText(t *testing.T, s *bufio.Scanner) string {
+	if s.Scan() {
+		return s.Text()
+	}
+
+	t.Fatal(s.Err())
+
+	// Not reached
+	return ""
+}
+
+func TestRestart(t *testing.T) {
+	cmd := serverHelper()
+	cmd.Stderr = os.Stderr
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+
+	txt := readText(t, scanner)
+	assert.Equal(t, "ready", txt)
+
+	r := NewTestReq(t, nil, "/test")
+	r.Get(true)
+
+	fmt.Fprintln(stdin, "restart")
+
+	txt = readText(t, scanner)
+	assert.Equal(t, "restart", txt)
+
+	txt = readText(t, scanner)
+	assert.Equal(t, "ready", txt)
+
+	r.Get(true)
+	stdin.Close()
+	//h.On("ServeHTTP", r.URL.Path).Return(r)
+
+	//h.AssertExpectations(t)
 }

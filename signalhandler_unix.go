@@ -5,19 +5,20 @@ package endless
 import (
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
 // The default Handler for none Windows OSes is a SignalHandler
 func init() {
-	DefaultHandler = NewSignalHandler()
+	SetHandler(NewSignalHandler())
 }
 
 // SignalHook represents a signal processing hook.
 // If false is returned no further processing of the signal is performed.
-type SignalHook func(sig os.Signal, srv *Server) (cont bool)
+type SignalHook func(sig os.Signal) (cont bool)
 
-// SignalHandler listens for signals and takes action on the Server.
+// SignalHandler listens for signals and takes action on the Manager.
 //
 // By default:
 // SIGHUP: calls Restart()
@@ -26,6 +27,9 @@ type SignalHook func(sig os.Signal, srv *Server) (cont bool)
 //
 // Pre and post signal handles can also be registered for custom actions.
 type SignalHandler struct {
+	mtx       sync.Mutex
+	stop      chan struct{}
+	done      chan struct{}
 	preHooks  map[os.Signal][]SignalHook
 	postHooks map[os.Signal][]SignalHook
 }
@@ -33,56 +37,75 @@ type SignalHandler struct {
 // NewSignalHandler create a new SignalHandler for the s
 func NewSignalHandler() *SignalHandler {
 	return &SignalHandler{
+		done:      make(chan struct{}),
 		preHooks:  make(map[os.Signal][]SignalHook),
 		postHooks: make(map[os.Signal][]SignalHook),
 	}
 }
 
+// Stop stops the handler from taking any more action
+func (s *SignalHandler) Stop() {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	select {
+	case <-s.done:
+		// already closed
+		return
+	default:
+		close(s.stop)
+		<-s.done
+	}
+}
+
 // Handle listens for os.Signal's and calls any registered function hooks.
-func (s *SignalHandler) Handle(srv *Server) {
+func (s *SignalHandler) Handle(m *Manager) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c)
+	defer func() {
+		signal.Stop(c)
+		close(s.done)
+	}()
 
 	pid := syscall.Getpid()
 	for {
 		var sig os.Signal
 		select {
 		case sig = <-c:
-		case <-srv.Done:
-			return
+		case <-s.stop:
 		}
 
-		if !s.handleSignal(s.preHooks[sig], sig, srv) {
+		if !s.handleSignal(s.preHooks[sig], sig) {
 			continue
 		}
 
 		switch sig {
 		case syscall.SIGHUP:
-			srv.Debugln("Received", sig, "restarting...")
-			if err := srv.Restart(); err != nil {
-				srv.Println("Fork err:", err)
+			m.Debugln("Received", sig, "restarting...")
+			if _, err := m.Restart(); err != nil {
+				m.Println("Fork err:", err)
 			}
 		case syscall.SIGUSR2:
-			srv.Debugln("Received", sig, "terminating...")
-			if err := srv.Terminate(0); err != nil {
-				srv.Println(pid, err)
+			m.Debugln("Received", sig, "terminating...")
+			if err := m.Terminate(0); err != nil {
+				m.Println(pid, err)
 			}
 		case syscall.SIGINT, syscall.SIGTERM:
-			srv.Debugln("Received", sig, "shutting down...")
-			if err := srv.Shutdown(); err != nil {
-				srv.Println(pid, err)
+			m.Debugln("Received", sig, "shutting down...")
+			if err := m.Shutdown(); err != nil {
+				m.Println(pid, err)
 			}
 		}
 
-		s.handleSignal(s.postHooks[sig], sig, srv)
+		s.handleSignal(s.postHooks[sig], sig)
 	}
 }
 
 // handleSignal calls all hooks for a signal.
 // Returns false early if a hook returns false.
-func (s *SignalHandler) handleSignal(hooks []SignalHook, sig os.Signal, srv *Server) bool {
+func (s *SignalHandler) handleSignal(hooks []SignalHook, sig os.Signal) bool {
 	for _, f := range hooks {
-		if !f(sig, srv) {
+		if !f(sig) {
 			return false
 		}
 	}
