@@ -87,11 +87,11 @@ type Handler interface {
 type Server struct {
 	http.Server
 	state            State
-	Listener         net.Listener
-	tlsInnerListener *Listener
+	listener         net.Listener
+	endlessListener  *Listener
 	wg               sync.WaitGroup
 	BeforeBegin      func(add string)
-	lock             sync.RWMutex
+	mtx              sync.RWMutex
 	TerminateTimeout time.Duration
 	Done             chan struct{}
 	Debug            bool
@@ -117,7 +117,7 @@ func NewServer(net, addr string, handler http.Handler) (srv *Server) {
 		srv.Debugln(syscall.Getpid(), addr)
 	}
 
-	mgr.RegisterServer(srv)
+	mgr.Register(srv)
 
 	return
 }
@@ -172,8 +172,8 @@ func ListenAndServeTLS(addr string, certFile string, keyFile string, handler htt
 
 // GetState returns the current state of the server.
 func (srv *Server) GetState() State {
-	srv.lock.RLock()
-	defer srv.lock.RUnlock()
+	srv.mtx.RLock()
+	defer srv.mtx.RUnlock()
 
 	return srv.state
 }
@@ -187,9 +187,6 @@ func (srv *Server) invalidState(req State) error {
 // If its not valid to transition from the current state to st then and
 // InvalidStateError is returned.
 func (srv *Server) setState(st State) error {
-	srv.lock.Lock()
-	defer srv.lock.Unlock()
-
 	if st == srv.state {
 		return nil
 	}
@@ -204,7 +201,7 @@ func (srv *Server) setState(st State) error {
 	case st == StateShutdown:
 		switch srv.state {
 		case StateShuttingDown:
-			close(srv.Done)
+			// Nothing
 		case StateFailed, StateTerminated:
 			return nil
 		default:
@@ -214,11 +211,19 @@ func (srv *Server) setState(st State) error {
 		if srv.state != StateShuttingDown {
 			return srv.invalidState(st)
 		}
-		close(srv.Done)
 	case st == StateFailed:
 		switch srv.state {
 		case StateTerminated, StateShutdown:
 			return srv.invalidState(st)
+		}
+	}
+
+	switch st {
+	case StateTerminated, StateFailed, StateShutdown:
+		// Final state
+		mgr.Unregister(srv)
+		if srv.listener != nil {
+			srv.listener.Close()
 		}
 		close(srv.Done)
 	}
@@ -233,20 +238,35 @@ func (srv *Server) setState(st State) error {
 // handler to reply to them. Handler is typically nil, in which case the
 // DefaultServeMux is used.
 //
-// In addition to the stl Serve behaviour each connection is added to a
+// In addition to the standard library Serve behaviour each connection is added to a
 // sync.Waitgroup so that all outstanding connections can be served before shutting
 // down the server.
 func (srv *Server) Serve() error {
+	srv.mtx.Lock()
+	defer srv.mtx.Unlock()
+
+	return srv.serveLocked()
+}
+
+func (srv *Server) serveLocked() error {
 	if err := srv.setState(StateRunning); err != nil {
 		return err
 	}
 
+	// Drop the lock while we're actually in serve or waiting for connections
+	// to complete.
+	srv.mtx.Unlock()
+
 	defer srv.Debugln(syscall.Getpid(), "Serve() returning...")
 
-	err := srv.Server.Serve(srv.Listener)
+	err := srv.Server.Serve(srv.listener)
 	srv.Debugln(syscall.Getpid(), "Waiting for connections to finish...")
 	srv.wg.Wait()
-	if err != nil && srv.GetState() == StateRunning {
+
+	// Reobtain the lock while we manipulate state, ensuring that callers
+	// unlock is successfull.
+	srv.mtx.Lock()
+	if err != nil && srv.state == StateRunning {
 		// Unexpected error as we're still meant to be running
 		srv.setState(StateFailed)
 		return err
@@ -258,24 +278,30 @@ func (srv *Server) Serve() error {
 // to handle requests on incoming connections. If srv.Addr is blank, ":http" is
 // used.
 func (srv *Server) ListenAndServe() error {
+	srv.mtx.Lock()
+	defer srv.mtx.Unlock()
+
 	if srv.Addr == "" {
 		srv.Addr = ":http"
 	}
 
 	l, err := mgr.Listen(srv)
 	if err != nil {
+		srv.setState(StateFailed)
 		return err
 	}
 
-	srv.Listener = NewListener(l, srv)
+	srv.endlessListener = NewListener(l, srv)
+	srv.listener = srv.endlessListener
 
 	if err = mgr.serverListening(); err != nil {
+		srv.setState(StateFailed)
 		return err
 	}
 
 	srv.BeforeBegin(srv.Addr)
 
-	return srv.Serve()
+	return srv.serveLocked()
 }
 
 // ListenAndServeTLS listens on the TCP network address srv.Addr and then calls
@@ -288,6 +314,9 @@ func (srv *Server) ListenAndServe() error {
 //
 // If srv.Addr is blank, ":https" is used.
 func (srv *Server) ListenAndServeTLS(certFile, keyFile string) (err error) {
+	srv.mtx.Lock()
+	defer srv.mtx.Unlock()
+
 	if srv.Addr == "" {
 		srv.Addr = ":https"
 	}
@@ -303,32 +332,38 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) (err error) {
 	config.Certificates = make([]tls.Certificate, 1)
 	config.Certificates[0], err = tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
+		srv.setState(StateFailed)
 		return
 	}
 
 	var l net.Listener
 	l, err = mgr.Listen(srv)
 	if err != nil {
+		srv.setState(StateFailed)
 		return
 	}
 
-	srv.tlsInnerListener = NewListener(l, srv)
-	srv.Listener = tls.NewListener(srv.tlsInnerListener, config)
+	srv.endlessListener = NewListener(l, srv)
+	srv.listener = tls.NewListener(srv.endlessListener, config)
 
 	if err = mgr.serverListening(); err != nil {
+		srv.setState(StateFailed)
 		return err
 	}
 
 	srv.BeforeBegin(srv.Addr)
 
-	return srv.Serve()
+	return srv.serveLocked()
 }
 
 // Shutdown closes the Listener so that no new connections are accepted. it also
 // starts a goroutine that will terminate (stop all running requests) the server
 // after TerminateTimeout.
 func (srv *Server) Shutdown() error {
-	switch srv.GetState() {
+	srv.mtx.Lock()
+	defer srv.mtx.Unlock()
+
+	switch srv.state {
 	case StateShuttingDown, StateShutdown, StateTerminated, StateFailed:
 		// No action needed
 		return nil
@@ -338,11 +373,12 @@ func (srv *Server) Shutdown() error {
 		return err
 	}
 
+	err := srv.listener.Close()
 	if srv.TerminateTimeout >= 0 {
 		go srv.Terminate(srv.TerminateTimeout)
 	}
 
-	return srv.Listener.Close()
+	return err
 }
 
 // Terminate forces the server to shutdown in a given timeout - whether it
@@ -353,9 +389,15 @@ func (srv *Server) Shutdown() error {
 // unblock the srv.wg.Wait() in Serve() thus causing ListenAndServe(TLS) to
 // return.
 func (srv *Server) Terminate(d time.Duration) error {
-	if srv.GetState() != StateShuttingDown {
+	srv.mtx.Lock()
+
+	if srv.state != StateShuttingDown {
+		srv.mtx.Unlock()
 		return srv.invalidState(StateTerminated)
 	}
+
+	// Drop the lock while we wait
+	srv.mtx.Unlock()
 
 	select {
 	case <-time.After(d):
@@ -364,38 +406,36 @@ func (srv *Server) Terminate(d time.Duration) error {
 		return nil
 	}
 
-	srv.Debugln("Terminating parent")
-	srv.EndlessListener().Terminate()
+	// Check Shutdown really didn't succeed as select is random
+	select {
+	case <-srv.Done:
+		// Shutdown succeeded in grace period
+		return nil
+	default:
+	}
+	srv.mtx.Lock()
+	defer srv.mtx.Unlock()
+
+	srv.endlessListener.Terminate()
 
 	return srv.setState(StateTerminated)
-}
-
-// EndlessListener returns the underlying endless.Listener.
-func (srv *Server) EndlessListener() *Listener {
-	if l, ok := srv.Listener.(*Listener); ok {
-		// normal listener
-		return l
-	}
-
-	// tls listener
-	return srv.tlsInnerListener
 }
 
 // Listener represents an endless listener.
 type Listener struct {
 	net.Listener
+	mtx    sync.Mutex
 	server *Server
-	conns  map[net.Conn]struct{}
-}
-
-func (el *Listener) deleteConn(c net.Conn) {
-	delete(el.conns, c)
+	conns  map[*conn]struct{}
 }
 
 // Terminate closes all active connections accepted by the listener.
 func (el *Listener) Terminate() {
+	el.mtx.Lock()
+	defer el.mtx.Unlock()
+
 	for c := range el.conns {
-		c.Close()
+		el.closeConnLocked(c)
 	}
 }
 
@@ -411,10 +451,35 @@ func (el *Listener) Accept() (net.Conn, error) {
 		Conn:     c,
 		listener: el,
 	}
+
+	el.mtx.Lock()
+	defer el.mtx.Unlock()
+
 	el.conns[wc] = struct{}{}
 	el.server.wg.Add(1)
 
 	return wc, nil
+}
+
+// closeConn closes a connection removing it from the active connections list and notifies the server its done.
+func (el *Listener) closeConn(c *conn) error {
+	el.mtx.Lock()
+	defer el.mtx.Unlock()
+
+	return el.closeConnLocked(c)
+}
+
+func (el *Listener) closeConnLocked(c *conn) error {
+	if c.closed {
+		// Already closed
+		return nil
+	}
+
+	delete(el.conns, c)
+	el.server.wg.Done()
+	c.closed = true
+
+	return c.Conn.Close()
 }
 
 // ErrUnsupportedListener is the error returned when the Listener doesn't support a File method.
@@ -431,7 +496,7 @@ func NewListener(l net.Listener, srv *Server) *Listener {
 	return &Listener{
 		Listener: l,
 		server:   srv,
-		conns:    make(map[net.Conn]struct{}),
+		conns:    make(map[*conn]struct{}),
 	}
 }
 
@@ -449,25 +514,11 @@ func (el *Listener) File() (*os.File, error) {
 }
 
 type conn struct {
-	sync.Mutex
 	net.Conn
 	listener *Listener
+	closed   bool
 }
 
 func (c *conn) Close() error {
-	c.Lock()
-	defer c.Unlock()
-
-	if c.listener == nil {
-		// Already closed
-		return nil
-	}
-
-	err := c.Conn.Close()
-
-	c.listener.deleteConn(c)
-	c.listener.server.wg.Done()
-	c.listener = nil
-
-	return err
+	return c.listener.closeConn(c)
 }

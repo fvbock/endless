@@ -70,12 +70,20 @@ func (m *Manager) Listen(s *Server) (net.Listener, error) {
 	return l, err
 }
 
-// RegisterServer adds a server to the mangers registered servers.
-func (m *Manager) RegisterServer(srv *Server) {
+// Register adds a server to the managers registered servers.
+func (m *Manager) Register(srv *Server) {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 
-	m.servers[srv.Addr] = srv
+	m.servers[srv.AddressKey()] = srv
+}
+
+// Unregister removes a server to the managers registered servers.
+func (m *Manager) Unregister(srv *Server) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	delete(m.servers, srv.AddressKey())
 }
 
 func (m *Manager) restartInit() ([]*os.File, []string, error) {
@@ -91,7 +99,7 @@ func (m *Manager) restartInit() ([]*os.File, []string, error) {
 
 	// Get the accessor socket fds for _all_ server instances
 	for _, srv := range m.servers {
-		f, err := srv.EndlessListener().File()
+		f, err := srv.endlessListener.File()
 		if err != nil {
 			return nil, nil, err
 		}
