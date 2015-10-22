@@ -24,7 +24,7 @@ I found the excellent post [Graceful Restart in Golang](http://grisha.org/blog/2
 
 ## Default Timeouts & MaxHeaderBytes
 
-There are three variables exported by the package that control the values set for `DefaultWriteTimeOut`, `DefaultWriteTimeOut`, and `MaxHeaderBytes` on the inner [`http.Server`](https://golang.org/pkg/net/http/#Server):
+There are three variables exported by the package that control the values set for `DefaultReadTimeOut`, `DefaultWriteTimeOut`, and `MaxHeaderBytes` on the inner [`http.Server`](https://golang.org/pkg/net/http/#Server):
 
 	DefaultReadTimeOut    time.Duration
 	DefaultWriteTimeOut   time.Duration
@@ -37,7 +37,7 @@ These have impact on endless by potentially not letting the parent process die u
 
 ### Hammer Time
 
-To deal with hanging requests on the parent after restarting endless will *hammer* the parent 60 seconds after recieving the shutdown signal from the forked child process. When hammered still running requests get terminated. This behaviour can be controlled by another exported variable:
+To deal with hanging requests on the parent after restarting endless will *hammer* the parent 60 seconds after receiving the shutdown signal from the forked child process. When hammered still running requests get terminated. This behaviour can be controlled by another exported variable:
 
     DefaultHammerTime time.Duration
 
@@ -56,7 +56,7 @@ and then replacing `http.ListenAndServe` with `endless.ListenAndServe` or `http.
 
 	err := endless.ListenAndServe("localhost:4242", handler)
 
-After starting your server you can make some changes, build, and send `SIGHUP` to the running process and it will finish handling any outstanding requests and serve all new incomming ones with the new binary.
+After starting your server you can make some changes, build, and send `SIGHUP` to the running process and it will finish handling any outstanding requests and serve all new incoming ones with the new binary.
 
 More examples are in [here](https://github.com/fvbock/endless/tree/master/examples)
 
@@ -73,9 +73,9 @@ The endless server will listen for the following signals: `syscall.SIGHUP`, `sys
 
 `SIGUSR2` will trigger [hammerTime](https://github.com/fvbock/endless#hammer-time)
 
-`SIGUSR1` and `SIGTSTP` are listened for but do not trigger anything in the endless server itself. (porbably useless - might get rid of those two)
+`SIGUSR1` and `SIGTSTP` are listened for but do not trigger anything in the endless server itself. (probably useless - might get rid of those two)
 
-You can hook your own functions to be called *pre* or *post* signal handling - eg. pre fork or pre shutdown. More about that in the [hook examle](https://github.com/fvbock/endless/tree/master/examples#hooking-into-the-signal-handling).
+You can hook your own functions to be called *pre* or *post* signal handling - eg. pre fork or pre shutdown. More about that in the [hook example](https://github.com/fvbock/endless/tree/master/examples#hooking-into-the-signal-handling).
 
 
 ## Limitation: No changing of ports
