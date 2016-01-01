@@ -92,7 +92,7 @@ If you want to save actual pid file, you can change the `BeforeBegin` hook like 
 	server.BeforeBegin = func(add string) {
 		pidfile.SetPidfilePath("actual.pid")
 		pidfile.Write()
-		// log.Printf("Pid %d written to server.pid", syscall.Getpid())
+		// log.Printf("Pid %d written to actual.pid", syscall.Getpid())
 	}
 	err := server.ListenAndServe()
 
