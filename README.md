@@ -86,6 +86,8 @@ Currently you cannot restart a server on a different port than the previous vers
 
 If you want to save actual pid file, you can change the `BeforeBegin` hook like this:
 
+	import "github.com/facebookgo/pidfile"
+
 	server := endless.NewServer("localhost:4242", handler)
 	server.BeforeBegin = func(add string) {
 		pidfile.SetPidfilePath("actual.pid")
