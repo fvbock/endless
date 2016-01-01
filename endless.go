@@ -83,6 +83,7 @@ type endlessServer struct {
 	isChild          bool
 	state            uint8
 	lock             *sync.RWMutex
+	BeforeBegin      func(add string)
 }
 
 /*
@@ -134,6 +135,10 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	srv.Server.WriteTimeout = DefaultWriteTimeOut
 	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes
 	srv.Server.Handler = handler
+
+	srv.BeforeBegin = func(addr string) {
+		log.Println(syscall.Getpid(), addr)
+	}
 
 	runningServersOrder = append(runningServersOrder, addr)
 	runningServers[addr] = srv
@@ -222,7 +227,8 @@ func (srv *endlessServer) ListenAndServe() (err error) {
 		syscall.Kill(syscall.Getppid(), syscall.SIGTERM)
 	}
 
-	log.Println(syscall.Getpid(), srv.Addr)
+	srv.BeforeBegin(srv.Addr)
+
 	return srv.Serve()
 }
 
@@ -418,7 +424,7 @@ func (srv *endlessServer) hammerTime(d time.Duration) {
 func (srv *endlessServer) fork() (err error) {
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
-	
+
 	// only one server isntance should fork!
 	if runningServersForked {
 		return errors.New("Another process already forked. Ignoring this one.")
