@@ -89,6 +89,7 @@ If you want to save actual pid file, you can change the `BeforeBegin` hook like 
 	server := endless.NewServer("localhost:4242", handler)
 	server.BeforeBegin = func(add string) {
 		log.Printf("Actual pid is %d", syscall.Getpid())
+		// save it somehow
 	}
 	err := server.ListenAndServe()
 
