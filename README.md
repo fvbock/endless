@@ -82,6 +82,17 @@ You can hook your own functions to be called *pre* or *post* signal handling - e
 
 Currently you cannot restart a server on a different port than the previous version was running on.
 
+## PID file
+
+If you want to save actual pid file, you can change the `BeforeBegin` hook like this:
+
+	server := endless.NewServer("localhost:4242", handler)
+	server.BeforeBegin = func(add string) {
+		log.Printf("Actual pid is %d", syscall.Getpid())
+		// save it somehow
+	}
+	err := server.ListenAndServe()
+
 
 ## TODOs
 
