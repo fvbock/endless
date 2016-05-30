@@ -552,7 +552,7 @@ related code endless itself runs
 */
 func (srv *endlessServer) RegisterSignalHook(prePost int, sig os.Signal, f func()) (err error) {
 	if prePost != PRE_SIGNAL && prePost != POST_SIGNAL {
-		err = fmt.Errorf("Cannot use %v for prePost arg. Must be endless.PRE_SIGNAL or endless.POST_SIGNAL.")
+		err = fmt.Errorf("Cannot use %v for prePost arg. Must be endless.PRE_SIGNAL or endless.POST_SIGNAL.", sig)
 		return
 	}
 	for _, s := range hookableSignals {
@@ -561,6 +561,6 @@ func (srv *endlessServer) RegisterSignalHook(prePost int, sig os.Signal, f func(
 			return
 		}
 	}
-	err = fmt.Errorf("Signal %v is not supported.")
+	err = fmt.Errorf("Signal %v is not supported.", sig)
 	return
 }
