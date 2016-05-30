@@ -348,6 +348,10 @@ func (srv *endlessServer) handleSignals() {
 			srv.shutdown()
 		case syscall.SIGTSTP:
 			log.Println(pid, "Received SIGTSTP.")
+			err := syscall.Kill(pid, syscall.SIGSTOP)
+			if err != nil {
+				log.Println("SIGSTP error", err)
+			}
 		default:
 			log.Printf("Received %v: nothing i care about...\n", sig)
 		}
