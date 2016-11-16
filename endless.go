@@ -454,7 +454,13 @@ func (srv *endlessServer) fork() (err error) {
 	}
 
 	// log.Println(files)
-	path := os.Args[0]
+	path, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	path = path + "/" + filepath.Base(os.Args[0])
+	
 	var args []string
 	if len(os.Args) > 1 {
 		args = os.Args[1:]
