@@ -422,7 +422,7 @@ func (srv *endlessServer) fork() (err error) {
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
 
-	// only one server isntance should fork!
+	// only one server instance should fork!
 	if runningServersForked {
 		return errors.New("Another process already forked. Ignoring this one.")
 	}
