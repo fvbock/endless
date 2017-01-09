@@ -297,13 +297,11 @@ func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) 
 		l, err = net.FileListener(f)
 		if err != nil {
 			err = fmt.Errorf("net.FileListener error: %v", err)
-			return
 		}
 	} else {
 		l, err = net.Listen("tcp", laddr)
 		if err != nil {
 			err = fmt.Errorf("net.Listen error: %v", err)
-			return
 		}
 	}
 	return
