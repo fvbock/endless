@@ -169,6 +169,9 @@ func (m *Manager) Restart() (*os.Process, error) {
 		return nil, fmt.Errorf("restart failed: %v", err)
 	}
 
+	// Close our copy of the write side straight away so we don't hold it open
+	// after the child closes it.
+	pw.Close()
 	go m.childWait(pr)
 
 	return cmd.Process, nil
@@ -178,13 +181,9 @@ func (m *Manager) Restart() (*os.Process, error) {
 // by closing the other end of the pipe and then calls Shutdown.
 func (m *Manager) childWait(rc io.ReadCloser) error {
 	for {
-		buf := make([]byte, 10)
-		n, err := rc.Read(buf)
-		if err != nil {
-			fmt.Println("read1:", err)
+		if _, err := rc.Read(make([]byte, 10)); err != nil {
 			break
 		}
-		fmt.Println("read2:", buf[:n])
 	}
 
 	return m.Shutdown()
@@ -249,4 +248,5 @@ func Terminate(d time.Duration) error {
 // SetHandler calls SetHandler on the default manager.
 func SetHandler(h Handler) {
 	mgr.SetHandler(h)
+	go h.Handle(mgr)
 }
