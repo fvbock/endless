@@ -263,6 +263,8 @@ func (srv *Server) serveLocked() error {
 	srv.Debugln(syscall.Getpid(), "Waiting for connections to finish...")
 	srv.wg.Wait()
 
+	srv.Debugln(syscall.Getpid(), "Connections finished")
+
 	// Reobtain the lock while we manipulate state, ensuring that callers
 	// unlock is successfull.
 	srv.mtx.Lock()

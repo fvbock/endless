@@ -28,7 +28,6 @@ type SignalHook func(sig os.Signal) (cont bool)
 // Pre and post signal handles can also be registered for custom actions.
 type SignalHandler struct {
 	mtx       sync.Mutex
-	stop      chan struct{}
 	done      chan struct{}
 	preHooks  map[os.Signal][]SignalHook
 	postHooks map[os.Signal][]SignalHook
@@ -47,14 +46,11 @@ func NewSignalHandler() *SignalHandler {
 func (s *SignalHandler) Stop() {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-
 	select {
 	case <-s.done:
-		// already closed
 		return
 	default:
-		close(s.stop)
-		<-s.done
+		close(s.done)
 	}
 }
 
@@ -64,7 +60,7 @@ func (s *SignalHandler) Handle(m *Manager) {
 	signal.Notify(c)
 	defer func() {
 		signal.Stop(c)
-		close(s.done)
+		s.Stop()
 	}()
 
 	pid := syscall.Getpid()
@@ -72,11 +68,12 @@ func (s *SignalHandler) Handle(m *Manager) {
 		var sig os.Signal
 		select {
 		case sig = <-c:
-		case <-s.stop:
+		case <-s.done:
+			return
 		}
 
 		if !s.handleSignal(s.preHooks[sig], sig) {
-			continue
+			return
 		}
 
 		switch sig {
