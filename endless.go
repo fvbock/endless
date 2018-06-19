@@ -286,14 +286,20 @@ it got passed when restarted.
 func (srv *endlessServer) getListener(laddr string) (l net.Listener, err error) {
 	if srv.isChild {
 		var ptrOffset uint = 0
+		var existed = false
 		runningServerReg.RLock()
 		defer runningServerReg.RUnlock()
 		if len(socketPtrOffsetMap) > 0 {
-			ptrOffset = socketPtrOffsetMap[laddr]
+			ptrOffset, existed = socketPtrOffsetMap[laddr]
 			// log.Println("laddr", laddr, "ptr offset", socketPtrOffsetMap[laddr])
 		}
 
-		f := os.NewFile(uintptr(3+ptrOffset), "")
+		if existed {
+			f := os.NewFile(uintptr(3+ptrOffset), "")
+			l, err = net.FileListener(f)
+		} else {
+			l, err = net.Listen("tcp", laddr)
+		}
 		l, err = net.FileListener(f)
 		if err != nil {
 			err = fmt.Errorf("net.FileListener error: %v", err)
@@ -560,4 +566,39 @@ func (srv *endlessServer) RegisterSignalHook(prePost int, sig os.Signal, f func(
 	}
 	err = fmt.Errorf("Signal %v is not supported.", sig)
 	return
+}
+
+/*
+Close unused listeners, used in forked new process like that:
+func main() {
+	......
+	// close unused endless listener
+	go func() {
+		time.Sleep(time.Second * 5)
+		endless.CloseUnusedListeners()
+	}()
+	......
+}
+*/
+func CloseUnusedListeners() error {
+	for addr, ptrOffset := range(socketPtrOffsetMap) {
+		if !stringInSlice(addr, runningServersOrder) {
+			f := os.NewFile(uintptr(3+ptrOffset), "")
+			l, err := net.FileListener(f)
+			if err != nil {
+				return err
+			}
+			l.Close()
+		}
+	}
+	return nil
+}
+
+func stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
 }
