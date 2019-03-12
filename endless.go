@@ -15,7 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
 	// "github.com/fvbock/uds-go/introspect"
 )
 
@@ -90,10 +89,10 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
 
-	socketOrder = os.Getenv("ENDLESS_SOCKET_ORDER")
-	isChild = os.Getenv("ENDLESS_CONTINUE") != ""
+	socketOrder, found := os.LookupEnv("ENDLESS_SOCKET_ORDER")
+	_, isChild := os.LookupEnv("ENDLESS_CONTINUE")
 
-	if len(socketOrder) > 0 {
+	if found {
 		for i, addr := range strings.Split(socketOrder, ",") {
 			socketPtrOffsetMap[addr] = uint(i)
 		}
