@@ -9,13 +9,13 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func handlerSimple(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("WORLD!"))
 }
 
 func main() {
 	mux1 := mux.NewRouter()
-	mux1.HandleFunc("/hello", handler).
+	mux1.HandleFunc("/hello", handlerSimple).
 		Methods("GET")
 
 	err := endless.ListenAndServe("localhost:4242", mux1)

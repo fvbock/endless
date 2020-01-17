@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func handlerPort(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("WORLD!"))
 }
 
@@ -26,7 +26,7 @@ func handlerBar(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	mux1 := mux.NewRouter()
-	mux1.HandleFunc("/hello", handler).
+	mux1.HandleFunc("/hello", handlerPort).
 		Methods("GET")
 	mux1.HandleFunc("/foo", handlerFoo).
 		Methods("GET")
