@@ -193,6 +193,10 @@ func (srv *endlessServer) Serve() (err error) {
 	defer log.Println(syscall.Getpid(), "Serve() returning...")
 	srv.setState(STATE_RUNNING)
 	err = srv.Server.Serve(srv.EndlessListener)
+	// Active termination to eliminate error messages
+	if srv.getState() != STATE_RUNNING{
+		err = nil
+	}
 	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
 	srv.wg.Wait()
 	srv.setState(STATE_TERMINATE)
@@ -477,6 +481,10 @@ func (srv *endlessServer) fork() (err error) {
 		log.Fatalf("Restart: Failed to launch, error: %v", err)
 	}
 
+	go func() {
+		// Avoid zombie processes, There is no wait subprocess state, which may lead to zombie process in subprocesses.
+		cmd.Wait()
+	}()
 	return
 }
 
