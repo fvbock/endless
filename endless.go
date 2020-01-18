@@ -477,6 +477,10 @@ func (srv *endlessServer) fork() (err error) {
 		log.Fatalf("Restart: Failed to launch, error: %v", err)
 	}
 
+	go func() {
+		// Avoid zombie processes, There is no wait subprocess state, which may lead to zombie process in subprocesses.
+		cmd.Wait()
+	}()
 	return
 }
 
