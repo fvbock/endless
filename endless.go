@@ -473,7 +473,7 @@ func (srv *endlessServer) fork() (err error) {
 
 	err = cmd.Run()
 	if err != nil {
-		log.Errorf("Restart: Failed to launch, error: %v", err)
+		log.Printf("Restart: Failed to launch, error: %v\n", err)
 	}
 
 	return
