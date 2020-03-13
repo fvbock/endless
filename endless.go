@@ -15,7 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
 	// "github.com/fvbock/uds-go/introspect"
 )
 
@@ -472,7 +471,7 @@ func (srv *endlessServer) fork() (err error) {
 	// 	Ctty:    ,
 	// }
 
-	err = cmd.Start()
+	err = cmd.Run()
 	if err != nil {
 		log.Fatalf("Restart: Failed to launch, error: %v", err)
 	}
