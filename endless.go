@@ -408,6 +408,9 @@ func (srv *endlessServer) hammerTime(d time.Duration) {
 		return
 	}
 	time.Sleep(d)
+	if srv.getState() == STATE_TERMINATE {
+		return
+	}
 	log.Println("[STOP - Hammer Time] Forcefully shutting down parent")
 	for {
 		if srv.getState() == STATE_TERMINATE {
