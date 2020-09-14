@@ -477,6 +477,16 @@ func (srv *endlessServer) fork() (err error) {
 		log.Fatalf("Restart: Failed to launch, error: %v", err)
 	}
 
+	// allow repeat kill -HUP when fork cmd is exit. by @flyhope
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			log.Println(err)
+		} else {
+			runningServersForked = false
+		}
+	}()
+
 	return
 }
 
