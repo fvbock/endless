@@ -147,13 +147,35 @@ func NewServer(ctx context.Context, addr string, handler http.Handler) (srv *end
 }
 
 /*
+ListenAndServeCtx listens on the TCP network address addr and then calls Serve
+with handler to handle requests on incoming connections. Handler is typically
+nil, in which case the DefaultServeMux is used.
+*/
+func ListenAndServeCtx(ctx context.Context, addr string, handler http.Handler) error {
+	server := NewServer(ctx, addr, handler)
+	return server.ListenAndServe()
+}
+
+/*
 ListenAndServe listens on the TCP network address addr and then calls Serve
 with handler to handle requests on incoming connections. Handler is typically
 nil, in which case the DefaultServeMux is used.
 */
-func ListenAndServe(ctx context.Context, addr string, handler http.Handler) error {
-	server := NewServer(ctx, addr, handler)
+func ListenAndServe(addr string, handler http.Handler) error {
+	server := NewServer(context.Background(), addr, handler)
 	return server.ListenAndServe()
+}
+
+/*
+ListenAndServeTLSCtx acts identically to ListenAndServe, except that it expects
+HTTPS connections. Additionally, files containing a certificate and matching
+private key for the server must be provided. If the certificate is signed by a
+certificate authority, the certFile should be the concatenation of the server's
+certificate followed by the CA's certificate.
+*/
+func ListenAndServeTLSCtx(ctx context.Context, addr string, certFile string, keyFile string, handler http.Handler) error {
+	server := NewServer(ctx, addr, handler)
+	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
 /*
@@ -163,8 +185,8 @@ private key for the server must be provided. If the certificate is signed by a
 certificate authority, the certFile should be the concatenation of the server's
 certificate followed by the CA's certificate.
 */
-func ListenAndServeTLS(ctx context.Context, addr string, certFile string, keyFile string, handler http.Handler) error {
-	server := NewServer(ctx, addr, handler)
+func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
+	server := NewServer(context.Background(), addr, handler)
 	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
