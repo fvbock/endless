@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
 	"syscall"
 
 	"github.com/gorilla/mux"
-	"github.com/voyager3m/endless"
+	"github.com/voyager3m/endless/v2"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +27,7 @@ func main() {
 	mux1.HandleFunc("/hello", handler).
 		Methods("GET")
 
-	srv := endless.NewServer(context.Background(), "localhost:4244", mux1)
+	srv := endless.NewServer("localhost:4244", mux1)
 	srv.SignalHooks[endless.PRE_SIGNAL][syscall.SIGUSR1] = append(
 		srv.SignalHooks[endless.PRE_SIGNAL][syscall.SIGUSR1],
 		preSigUsr1)
