@@ -1,6 +1,7 @@
 package endless
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
 	// "github.com/fvbock/uds-go/introspect"
 )
 
@@ -80,13 +80,15 @@ type endlessServer struct {
 	state            uint8
 	lock             *sync.RWMutex
 	BeforeBegin      func(add string)
+	Ctx              context.Context
+	Cancel           context.CancelFunc
 }
 
 /*
 NewServer returns an intialized endlessServer Object. Calling Serve on it will
 actually "start" the server.
 */
-func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
+func NewServer(ctx context.Context, addr string, handler http.Handler) (srv *endlessServer) {
 	runningServerReg.Lock()
 	defer runningServerReg.Unlock()
 
@@ -132,6 +134,7 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 	srv.Server.WriteTimeout = DefaultWriteTimeOut
 	srv.Server.MaxHeaderBytes = DefaultMaxHeaderBytes
 	srv.Server.Handler = handler
+	srv.Ctx, srv.Cancel = context.WithCancel(ctx)
 
 	srv.BeforeBegin = func(addr string) {
 		log.Println(syscall.Getpid(), addr)
@@ -144,13 +147,35 @@ func NewServer(addr string, handler http.Handler) (srv *endlessServer) {
 }
 
 /*
+ListenAndServeCtx listens on the TCP network address addr and then calls Serve
+with handler to handle requests on incoming connections. Handler is typically
+nil, in which case the DefaultServeMux is used.
+*/
+func ListenAndServeCtx(ctx context.Context, addr string, handler http.Handler) error {
+	server := NewServer(ctx, addr, handler)
+	return server.ListenAndServe()
+}
+
+/*
 ListenAndServe listens on the TCP network address addr and then calls Serve
 with handler to handle requests on incoming connections. Handler is typically
 nil, in which case the DefaultServeMux is used.
 */
 func ListenAndServe(addr string, handler http.Handler) error {
-	server := NewServer(addr, handler)
+	server := NewServer(context.Background(), addr, handler)
 	return server.ListenAndServe()
+}
+
+/*
+ListenAndServeTLSCtx acts identically to ListenAndServe, except that it expects
+HTTPS connections. Additionally, files containing a certificate and matching
+private key for the server must be provided. If the certificate is signed by a
+certificate authority, the certFile should be the concatenation of the server's
+certificate followed by the CA's certificate.
+*/
+func ListenAndServeTLSCtx(ctx context.Context, addr string, certFile string, keyFile string, handler http.Handler) error {
+	server := NewServer(ctx, addr, handler)
+	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
 /*
@@ -161,7 +186,7 @@ certificate authority, the certFile should be the concatenation of the server's
 certificate followed by the CA's certificate.
 */
 func ListenAndServeTLS(addr string, certFile string, keyFile string, handler http.Handler) error {
-	server := NewServer(addr, handler)
+	server := NewServer(context.Background(), addr, handler)
 	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
@@ -192,7 +217,9 @@ down the server.
 func (srv *endlessServer) Serve() (err error) {
 	defer log.Println(syscall.Getpid(), "Serve() returning...")
 	srv.setState(STATE_RUNNING)
+	srv.Server.BaseContext = func(list net.Listener) context.Context { return srv.Ctx }
 	err = srv.Server.Serve(srv.EndlessListener)
+
 	log.Println(syscall.Getpid(), "Waiting for connections to finish...")
 	srv.wg.Wait()
 	srv.setState(STATE_TERMINATE)
@@ -376,6 +403,7 @@ func (srv *endlessServer) shutdown() {
 	if DefaultHammerTime >= 0 {
 		go srv.hammerTime(DefaultHammerTime)
 	}
+	srv.Cancel()
 	// disable keep-alives on existing connections
 	srv.SetKeepAlivesEnabled(false)
 	err := srv.EndlessListener.Close()

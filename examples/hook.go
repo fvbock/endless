@@ -6,8 +6,8 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/fvbock/endless"
 	"github.com/gorilla/mux"
+	"github.com/voyager3m/endless/v2"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {

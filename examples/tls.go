@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 
-	"github.com/fvbock/endless"
 	"github.com/gorilla/mux"
+	"github.com/voyager3m/endless"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +20,7 @@ func main() {
 	mux1.HandleFunc("/hello", handler).
 		Methods("GET")
 
-	err := endless.ListenAndServeTLS("localhost:4242", "cert.pem", "key.pem", mux1)
+	err := endless.ListenAndServeTLS(context.Background(), "localhost:4242", "cert.pem", "key.pem", mux1)
 	if err != nil {
 		log.Println(err)
 	}
