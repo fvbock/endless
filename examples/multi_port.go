@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/fvbock/endless"
 	"github.com/gorilla/mux"
+	"github.com/voyager3m/endless"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +42,7 @@ func main() {
 	w.Add(2)
 	go func() {
 		time.Sleep(time.Second)
-		err := endless.ListenAndServe("localhost:4242", mux1)
+		err := endless.ListenAndServe(context.Background(), "localhost:4242", mux1)
 		if err != nil {
 			log.Println(err)
 		}
@@ -49,7 +50,7 @@ func main() {
 		w.Done()
 	}()
 	go func() {
-		err := endless.ListenAndServe("localhost:4243", mux2)
+		err := endless.ListenAndServe(context.Background(), "localhost:4243", mux2)
 		if err != nil {
 			log.Println(err)
 		}

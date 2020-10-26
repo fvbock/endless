@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/fvbock/endless"
 	"github.com/gorilla/mux"
+	"github.com/voyager3m/endless"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -22,7 +23,7 @@ func main() {
 	mux.HandleFunc("/foo", handler).
 		Methods("GET")
 
-	err := endless.ListenAndServe("localhost:4242", mux)
+	err := endless.ListenAndServe(context.Background(), "localhost:4242", mux)
 	if err != nil {
 		log.Println(err)
 	}
